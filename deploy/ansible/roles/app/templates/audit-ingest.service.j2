@@ -1,0 +1,27 @@
+[Unit]
+Description=Audit Ingest API (write-only)
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+User={{ app_user }}
+Group={{ app_user }}
+WorkingDirectory={{ app_dir }}/src
+EnvironmentFile=/etc/audit-platform/app.env
+ExecStart={{ app_dir }}/venv/bin/gunicorn app.ingest.main:app \
+    -k uvicorn.workers.UvicornWorker -b 127.0.0.1:8001 --workers 2
+Restart=on-failure
+RestartSec=3
+
+# sandboxing
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths={{ app_dir }}
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+[Install]
+WantedBy=multi-user.target

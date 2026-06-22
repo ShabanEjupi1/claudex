@@ -1,0 +1,38 @@
+---
+# ---- Non-secret configuration (secrets live in vault.yml; see vault.example.yml) ----
+
+# Repo root on the control node (this file is in deploy/ansible/group_vars).
+app_repo_dir: "{{ playbook_dir }}/../.."
+
+# Floating VIP that clients/collectors actually target (pick a free address).
+vip_address: 10.10.173.20
+vip_prefix: 24
+vip_interface: eth0
+vip_router_id: 51
+
+# The other node, derived automatically (used for replication + pg_hba).
+peer_ip: "{{ hostvars[(groups['proliant'] | difference([inventory_hostname]))[0]].ansible_host }}"
+
+# Service identities
+dashboard_server_name: dashboard.internal
+ingest_server_name: ingest.internal
+
+# Application layout
+app_user: auditapp
+app_dir: /opt/audit
+
+# TLS material (provision these from your internal CA before running).
+tls_cert: /etc/pki/tls/certs/audit.crt
+tls_key: /etc/pki/tls/private/audit.key
+ingest_client_ca: /etc/pki/audit/collector-ca.crt   # CA that signs collector client certs
+
+# Network access control (least privilege)
+allowed_admin_cidr: 10.10.10.0/24        # admin/jump-host subnet -> dashboard (443)
+allowed_collector_cidr: 10.10.20.0/24    # collectors -> ingest (8443)
+monitoring_cidr: 10.10.10.0/24           # who may scrape node_exporter (9100)
+
+# OIDC (non-secret parts; client secret is in vault)
+oidc_issuer: https://idp.internal/realms/audit
+oidc_client_id: audit-dashboard
+oidc_role_claim: groups
+oidc_zones_claim: zones

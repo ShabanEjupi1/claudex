@@ -1,0 +1,18 @@
+:root { font-family: system-ui, -apple-system, sans-serif; }
+body { margin: 0; color: #1b1f24; }
+header { display: flex; gap: 1rem; align-items: center;
+         padding: .6rem 1rem; background: #0f1b2d; color: #fff; }
+header nav a, header .user a { color: #9ecbff; margin-right: .8rem; text-decoration: none; }
+header .user { margin-left: auto; font-size: .85rem; }
+main { padding: 1rem 1.5rem; }
+h1 { font-size: 1.25rem; }
+table { border-collapse: collapse; width: 100%; }
+th, td { text-align: left; padding: .35rem .6rem; border-bottom: 1px solid #e1e4e8; font-size: .9rem; }
+.muted { color: #6a737d; font-weight: normal; }
+.evidence { white-space: pre-wrap; font-family: ui-monospace, monospace;
+            background: #f6f8fa; padding: .5rem; border-radius: 4px; }
+.sev-critical { color: #fff; background: #86181d; padding: 0 .3rem; border-radius: 3px; }
+.sev-high { color: #86181d; font-weight: 600; }
+.sev-medium { color: #b08800; }
+.sev-low, .sev-info { color: #6a737d; }
+dl dt { font-weight: 600; margin-top: .5rem; }

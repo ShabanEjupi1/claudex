@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}Findings{% endblock %}
+{% block content %}
+<h1>Findings <span class="muted">({{ rows|length }})</span></h1>
+{% if can_export %}<p><a href="/export.csv">Export CSV</a></p>{% endif %}
+<table>
+  <thead><tr>
+    <th>Detected</th><th>Sev</th><th>Status</th><th>Category</th>
+    <th>Asset</th><th>Zone</th><th>Service</th>
+  </tr></thead>
+  <tbody>
+  {% for r in rows %}
+    <tr>
+      <td>{{ r.detected_at }}</td>
+      <td class="sev-{{ r.severity }}">{{ r.severity }}</td>
+      <td>{{ r.status }}</td>
+      <td>{{ r.category }}</td>
+      <td><a href="/findings/{{ r.id }}">{{ r.asset_hostname or r.asset_ip }}</a></td>
+      <td>{{ r.asset_zone }}</td>
+      <td>{% if r.service_name %}{{ r.service_name }}/{{ r.service_port }}{% endif %}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

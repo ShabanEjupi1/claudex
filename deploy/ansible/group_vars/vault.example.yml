@@ -1,0 +1,17 @@
+---
+# Copy to group_vars/vault.yml and encrypt:
+#   ansible-vault encrypt group_vars/vault.yml
+# Generate strong random values, e.g.:  openssl rand -base64 32
+#
+# NONE of these may be committed in plaintext.
+
+vault_pg_ingest_password: CHANGE_ME
+vault_pg_dashboard_password: CHANGE_ME
+vault_pg_replication_password: CHANGE_ME
+
+vault_ingest_token: CHANGE_ME            # bearer token issued to collectors
+vault_ingest_hmac_key: CHANGE_ME         # >= 32 bytes
+vault_session_secret: CHANGE_ME          # >= 32 bytes
+vault_oidc_client_secret: CHANGE_ME
+
+vault_keepalived_auth_pass: CHANGE_ME    # VRRP shared secret (max 8 chars)

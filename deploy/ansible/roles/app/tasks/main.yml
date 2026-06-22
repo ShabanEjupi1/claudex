@@ -1,0 +1,90 @@
+---
+- name: Create the application user
+  ansible.builtin.user:
+    name: "{{ app_user }}"
+    system: true
+    shell: /sbin/nologin
+    home: "{{ app_dir }}"
+    create_home: true
+
+- name: Create source directory
+  ansible.builtin.file:
+    path: "{{ app_dir }}/src"
+    state: directory
+    owner: "{{ app_user }}"
+    group: "{{ app_user }}"
+    mode: "0750"
+
+- name: Create environment directory
+  ansible.builtin.file:
+    path: /etc/audit-platform
+    state: directory
+    owner: root
+    group: "{{ app_user }}"
+    mode: "0750"
+
+- name: Deploy application code + schema
+  ansible.builtin.copy:
+    src: "{{ app_repo_dir }}/{{ item }}"
+    dest: "{{ app_dir }}/src/"
+    owner: "{{ app_user }}"
+    group: "{{ app_user }}"
+    mode: preserve
+  loop:
+    - app
+    - schemas
+  notify:
+    - restart audit-ingest
+    - restart audit-dashboard
+
+- name: Create virtualenv + install dependencies
+  ansible.builtin.pip:
+    requirements: "{{ app_dir }}/src/app/requirements.txt"
+    virtualenv: "{{ app_dir }}/venv"
+    virtualenv_command: /usr/bin/python3 -m venv
+  become_user: "{{ app_user }}"
+  notify:
+    - restart audit-ingest
+    - restart audit-dashboard
+
+- name: Render runtime environment file (secrets from vault)
+  ansible.builtin.template:
+    src: app.env.j2
+    dest: /etc/audit-platform/app.env
+    owner: root
+    group: "{{ app_user }}"
+    mode: "0640"
+  no_log: true
+  notify:
+    - restart audit-ingest
+    - restart audit-dashboard
+
+- name: Install systemd units
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - audit-ingest.service
+    - audit-dashboard.service
+  notify:
+    - reload systemd
+    - restart audit-ingest
+    - restart audit-dashboard
+
+- name: Allow nginx (SELinux) to proxy to local app sockets
+  ansible.posix.seboolean:
+    name: httpd_can_network_connect
+    state: true
+    persistent: true
+
+- name: Enable + start app services
+  ansible.builtin.service:
+    name: "{{ item }}"
+    state: started
+    enabled: true
+  loop:
+    - audit-ingest
+    - audit-dashboard

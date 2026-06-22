@@ -1,0 +1,14 @@
+---
+- name: reload systemd
+  ansible.builtin.systemd:
+    daemon_reload: true
+
+- name: restart audit-ingest
+  ansible.builtin.service:
+    name: audit-ingest
+    state: restarted
+
+- name: restart audit-dashboard
+  ansible.builtin.service:
+    name: audit-dashboard
+    state: restarted

@@ -1,0 +1,50 @@
+---
+# Distributes locally-generated TLS material (deploy/ansible/files/tls/, created
+# by bootstrap.sh with GEN_SELF_SIGNED=1) to the nodes. If you manage certs via
+# enterprise PKI, skip this — just pre-place them at the paths in
+# group_vars/all.yml and this role becomes a no-op.
+
+- name: Check for locally-generated certificates
+  ansible.builtin.stat:
+    path: "{{ playbook_dir }}/files/tls/audit.crt"
+  register: local_cert
+  delegate_to: localhost
+  become: false
+  run_once: true
+
+- name: Distribute TLS material
+  when: local_cert.stat.exists
+  block:
+    - name: Ensure certificate directories exist
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: "0755"
+      loop:
+        - /etc/pki/tls/certs
+        - /etc/pki/tls/private
+        - /etc/pki/audit
+
+    - name: Install server certificate
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/files/tls/audit.crt"
+        dest: "{{ tls_cert }}"
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Install server private key
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/files/tls/audit.key"
+        dest: "{{ tls_key }}"
+        owner: root
+        group: root
+        mode: "0600"
+
+    - name: Install collector client CA (for ingest mTLS)
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/files/tls/collector-ca.crt"
+        dest: "{{ ingest_client_ca }}"
+        owner: root
+        group: root
+        mode: "0644"

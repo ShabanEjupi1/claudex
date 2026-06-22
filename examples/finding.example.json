@@ -1,0 +1,13 @@
+{
+  "schema_version": "1.0",
+  "source": { "collector": "scanner-01", "method": "nmap" },
+  "asset": { "hostname": "edge-rtr-01", "ip": "10.10.10.1", "role": "router", "zone": "edge" },
+  "category": "legacy-protocol",
+  "service": { "name": "telnet", "port": 23, "transport": "tcp" },
+  "cis_reference": "CIS Controls v8 4.8",
+  "severity": "high",
+  "status": "open",
+  "evidence": "TCP/23 open; banner 'User Access Verification'. Cleartext management protocol in use; replace with SSHv2.",
+  "detected_at": "2026-06-22T09:15:00Z",
+  "remediated_at": null
+}

@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://10.10.173.22/schemas/ingest-finding.schema.json",
+  "title": "Audit Finding",
+  "description": "A single network-audit finding ingested by the dashboard pipeline. The ingest tier MUST validate against this contract before persisting (anti-poisoning boundary).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "source", "asset", "category", "severity", "status", "detected_at"],
+  "properties": {
+    "schema_version": { "type": "string", "const": "1.0" },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["collector", "method"],
+      "properties": {
+        "collector": { "type": "string", "maxLength": 128 },
+        "method": { "type": "string", "enum": ["nmap", "nessus", "openvas", "cis-cat", "ansible", "nipper", "manual"] }
+      }
+    },
+    "asset": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ip"],
+      "properties": {
+        "hostname": { "type": "string", "maxLength": 253 },
+        "ip": { "type": "string", "format": "ipv4" },
+        "role": { "type": "string", "enum": ["router", "switch", "firewall", "wlc", "ap", "server", "other"] },
+        "zone": { "type": "string", "maxLength": 64 }
+      }
+    },
+    "category": {
+      "type": "string",
+      "enum": ["legacy-protocol", "open-port", "unencrypted-mgmt", "weak-crypto", "default-credential", "vulnerability", "config-drift"]
+    },
+    "service": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "maxLength": 64 },
+        "port": { "type": "integer", "minimum": 0, "maximum": 65535 },
+        "transport": { "type": "string", "enum": ["tcp", "udp"] }
+      }
+    },
+    "cis_reference": { "type": "string", "maxLength": 64 },
+    "cve": {
+      "type": "array",
+      "items": { "type": "string", "pattern": "^CVE-[0-9]{4}-[0-9]{4,}$" }
+    },
+    "severity": { "type": "string", "enum": ["info", "low", "medium", "high", "critical"] },
+    "status": { "type": "string", "enum": ["open", "in-progress", "remediated", "accepted-risk", "false-positive"] },
+    "evidence": {
+      "type": "string",
+      "maxLength": 4096,
+      "description": "Free text from scanners. UNTRUSTED — the dashboard MUST output-encode this (stored-XSS risk)."
+    },
+    "detected_at": { "type": "string", "format": "date-time" },
+    "remediated_at": { "type": ["string", "null"], "format": "date-time" }
+  }
+}

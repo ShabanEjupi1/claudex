@@ -1,0 +1,31 @@
+# Ingest front end — mTLS required, collector-subnet only, write path only.
+server {
+    listen 8443 ssl;
+    http2 on;
+    server_name {{ ingest_server_name }};
+
+    ssl_certificate     {{ tls_cert }};
+    ssl_certificate_key {{ tls_key }};
+    ssl_protocols       TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers on;
+
+    # Mutual TLS: client cert must be signed by the collector CA.
+    ssl_client_certificate {{ ingest_client_ca }};
+    ssl_verify_client      on;
+    ssl_verify_depth       2;
+
+    allow {{ allowed_collector_cidr }};
+    deny  all;
+
+    location /v1/ {
+        proxy_pass http://127.0.0.1:8001;
+        proxy_set_header Host              $host;
+        proxy_set_header X-Forwarded-For   $remote_addr;
+        proxy_set_header X-SSL-Client-Verify $ssl_client_verify;
+        proxy_set_header X-SSL-Client-DN     $ssl_client_s_dn;
+    }
+
+    location = /healthz {
+        proxy_pass http://127.0.0.1:8001/healthz;
+    }
+}

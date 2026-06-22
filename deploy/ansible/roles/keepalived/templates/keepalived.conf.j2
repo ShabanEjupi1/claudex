@@ -1,0 +1,29 @@
+# Managed by Ansible — active-passive VIP for the audit platform.
+vrrp_script chk_dashboard {
+    script "/usr/local/bin/check_dashboard.sh"
+    interval 2
+    weight -40
+    fall 2
+    rise 2
+}
+
+vrrp_instance AUDIT_VIP {
+    state {{ vip_state }}
+    interface {{ vip_interface }}
+    virtual_router_id {{ vip_router_id }}
+    priority {{ vip_priority }}
+    advert_int 1
+
+    authentication {
+        auth_type PASS
+        auth_pass {{ vault_keepalived_auth_pass }}
+    }
+
+    virtual_ipaddress {
+        {{ vip_address }}/{{ vip_prefix }}
+    }
+
+    track_script {
+        chk_dashboard
+    }
+}

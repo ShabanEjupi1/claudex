@@ -1,0 +1,61 @@
+---
+# Host metrics on both nodes; Prometheus + Grafana for visualization.
+# NOTE: verify package names for your distro/version — names differ across
+# EPEL/Grafana repo releases. This targets RHEL/Rocky 9 + EPEL.
+
+- name: Enable EPEL
+  ansible.builtin.dnf:
+    name: epel-release
+    state: present
+
+- name: Install node_exporter (host auditing/metrics) on every node
+  ansible.builtin.dnf:
+    name: golang-github-prometheus-node-exporter
+    state: present
+
+- name: Enable node_exporter
+  ansible.builtin.service:
+    name: node_exporter
+    state: started
+    enabled: true
+
+- name: Allow the monitoring subnet to scrape node_exporter
+  ansible.posix.firewalld:
+    rich_rule: "rule family=ipv4 source address={{ monitoring_cidr }} port port=9100 protocol=tcp accept"
+    permanent: true
+    immediate: true
+    state: enabled
+
+# Prometheus + Grafana run on the primary (visualization tier).
+- name: Add Grafana repo
+  ansible.builtin.yum_repository:
+    name: grafana
+    description: Grafana
+    baseurl: https://rpm.grafana.com
+    gpgcheck: true
+    gpgkey: https://rpm.grafana.com/gpg.key
+  when: pg_role == 'primary'
+
+- name: Install Prometheus + Grafana
+  ansible.builtin.dnf:
+    name: [golang-github-prometheus, grafana]
+    state: present
+  when: pg_role == 'primary'
+
+- name: Configure Prometheus scrape targets
+  ansible.builtin.template:
+    src: prometheus.yml.j2
+    dest: /etc/prometheus/prometheus.yml
+    owner: root
+    group: root
+    mode: "0644"
+  when: pg_role == 'primary'
+  notify: restart prometheus
+
+- name: Enable Prometheus + Grafana
+  ansible.builtin.service:
+    name: "{{ item }}"
+    state: started
+    enabled: true
+  loop: [prometheus, grafana-server]
+  when: pg_role == 'primary'

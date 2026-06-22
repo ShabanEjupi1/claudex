@@ -1,0 +1,5 @@
+---
+collections:
+  - name: ansible.posix          # firewalld, sysctl
+  - name: community.postgresql   # postgresql_db / _user / _privs / _script
+  - name: community.general

@@ -1,0 +1,119 @@
+---
+- name: Install PostgreSQL + Ansible client library
+  ansible.builtin.dnf:
+    name: [postgresql-server, postgresql-contrib, python3-psycopg2]
+    state: present
+
+- name: Initialize the cluster (idempotent)
+  ansible.builtin.command: /usr/bin/postgresql-setup --initdb
+  args:
+    creates: /var/lib/pgsql/data/PG_VERSION
+
+- name: Install TLS material for PostgreSQL (owned by postgres)
+  ansible.builtin.copy:
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+    remote_src: true
+    owner: postgres
+    group: postgres
+    mode: "0600"
+  loop:
+    - { src: "{{ tls_cert }}", dest: /var/lib/pgsql/data/server.crt }
+    - { src: "{{ tls_key }}",  dest: /var/lib/pgsql/data/server.key }
+  notify: restart postgresql
+
+- name: Apply audit cluster settings
+  ansible.builtin.blockinfile:
+    path: /var/lib/pgsql/data/postgresql.conf
+    marker: "# {mark} ANSIBLE AUDIT PLATFORM"
+    block: |
+      listen_addresses = 'localhost,{{ ansible_host }}'
+      ssl = on
+      ssl_cert_file = 'server.crt'
+      ssl_key_file = 'server.key'
+      password_encryption = scram-sha-256
+      wal_level = replica
+      max_wal_senders = 5
+      hot_standby = on
+  notify: restart postgresql
+
+- name: Deploy pg_hba.conf
+  ansible.builtin.template:
+    src: pg_hba.conf.j2
+    dest: /var/lib/pgsql/data/pg_hba.conf
+    owner: postgres
+    group: postgres
+    mode: "0600"
+  notify: restart postgresql
+
+- name: Allow PostgreSQL from the peer node (replication/failover)
+  ansible.posix.firewalld:
+    rich_rule: "rule family=ipv4 source address={{ peer_ip }}/32 port port=5432 protocol=tcp accept"
+    permanent: true
+    immediate: true
+    state: enabled
+
+- name: Ensure PostgreSQL is running
+  ansible.builtin.service:
+    name: postgresql
+    state: started
+    enabled: true
+
+# ----------------------------- primary only ----------------------------- #
+- name: Create the audit database
+  community.postgresql.postgresql_db:
+    name: audit
+    state: present
+  become_user: postgres
+  when: pg_role == 'primary'
+
+- name: Create application + replication roles (passwords from vault)
+  community.postgresql.postgresql_user:
+    db: audit
+    name: "{{ item.name }}"
+    password: "{{ item.password }}"
+    role_attr_flags: "{{ item.flags }}"
+    state: present
+  become_user: postgres
+  no_log: true
+  loop:
+    - { name: app_ingest,    password: "{{ vault_pg_ingest_password }}",      flags: "LOGIN" }
+    - { name: app_dashboard, password: "{{ vault_pg_dashboard_password }}",   flags: "LOGIN" }
+    - { name: replicator,    password: "{{ vault_pg_replication_password }}", flags: "LOGIN,REPLICATION" }
+  when: pg_role == 'primary'
+
+- name: Stage the schema file on the primary
+  ansible.builtin.copy:
+    src: "{{ app_repo_dir }}/app/db/schema.sql"
+    dest: /var/lib/pgsql/audit-schema.sql
+    owner: postgres
+    group: postgres
+    mode: "0640"
+  when: pg_role == 'primary'
+
+- name: Load schema + least-privilege grants
+  community.postgresql.postgresql_script:
+    db: audit
+    path: /var/lib/pgsql/audit-schema.sql
+  become_user: postgres
+  when: pg_role == 'primary'
+
+# ----------------------------- standby only ----------------------------- #
+# One-time bootstrap. DESTRUCTIVE: wipes the local data dir to clone the
+# primary. Guarded by standby.signal so it runs once. For managed automatic
+# failover, replace this with Patroni or repmgr.
+- name: Bootstrap streaming-replication standby (one-time)
+  ansible.builtin.shell: |
+    set -euo pipefail
+    systemctl stop postgresql
+    rm -rf /var/lib/pgsql/data/*
+    PGPASSWORD='{{ vault_pg_replication_password }}' pg_basebackup \
+      -h {{ hostvars[groups['proliant'][0]].ansible_host }} -U replicator \
+      -D /var/lib/pgsql/data -Fp -Xs -P -R
+    touch /var/lib/pgsql/data/standby.signal
+    chown -R postgres:postgres /var/lib/pgsql/data
+    systemctl start postgresql
+  args:
+    creates: /var/lib/pgsql/data/standby.signal
+  no_log: true
+  when: pg_role == 'standby'

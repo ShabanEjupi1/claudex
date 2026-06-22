@@ -1,0 +1,22 @@
+# Audit output contains sensitive infrastructure & vulnerability data.
+# It must NEVER be committed to source control.
+audit-output/
+*.nmap
+*.gnmap
+*.xml
+
+# Secrets / key material
+*.key
+*.pem
+*.p12
+.env
+vault-token
+deploy/ansible/group_vars/vault.yml
+deploy/ansible/files/tls/
+
+# Local tooling
+.venv/
+__pycache__/
+.pytest_cache/
+*.pyc
+*.retry

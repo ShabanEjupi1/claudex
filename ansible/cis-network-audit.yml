@@ -1,0 +1,67 @@
+---
+# cis-network-audit.yml — read-only CIS posture audit for Cisco IOS devices.
+#
+# Requires:  ansible-galaxy collection install cisco.ios
+# Run:       ansible-playbook -i ansible/inventory.ini ansible/cis-network-audit.yml
+#
+# READ-ONLY: this playbook only gathers and evaluates configuration; it never
+# modifies devices. Remediation is a separate, change-controlled step.
+# This is a starter skeleton — extend the `checks` list to your full CIS profile.
+
+- name: CIS network infrastructure audit (Cisco IOS)
+  hosts: network_devices
+  gather_facts: false
+  connection: network_cli
+  vars:
+    ansible_network_os: cisco.ios.ios
+    report_dir: "./audit-output/cis"
+    generated: "{{ lookup('pipe', 'date -u +%Y-%m-%dT%H:%M:%SZ') }}"
+  tasks:
+    - name: Pull running configuration
+      cisco.ios.ios_command:
+        commands:
+          - show running-config
+      register: runcfg
+
+    - name: Evaluate CIS-aligned checks
+      vars:
+        cfg: "{{ runcfg.stdout[0] }}"
+      ansible.builtin.set_fact:
+        findings:
+          - check: "Telnet (VTY transport) disabled"
+            cis: "CIS Controls v8 4.8"
+            pass: "{{ ('transport input ssh' in cfg) and ('transport input telnet' not in cfg) }}"
+          - check: "HTTP server disabled"
+            cis: "CIS Controls v8 4.8"
+            pass: "{{ 'no ip http server' in cfg }}"
+          - check: "SSH v2 enforced"
+            cis: "CIS Cisco IOS"
+            pass: "{{ 'ip ssh version 2' in cfg }}"
+          - check: "No SNMP v1/v2c communities"
+            cis: "CIS Controls v8 4.8"
+            pass: "{{ cfg | regex_search('snmp-server community') is none }}"
+          - check: "TCP small servers disabled"
+            cis: "CIS Cisco IOS"
+            pass: "{{ 'service tcp-small-servers' not in cfg or 'no service tcp-small-servers' in cfg }}"
+          - check: "UDP small servers disabled"
+            cis: "CIS Cisco IOS"
+            pass: "{{ 'service udp-small-servers' not in cfg or 'no service udp-small-servers' in cfg }}"
+          - check: "Password encryption enabled"
+            cis: "CIS Cisco IOS"
+            pass: "{{ 'service password-encryption' in cfg }}"
+          - check: "Source routing disabled"
+            cis: "CIS Cisco IOS"
+            pass: "{{ 'no ip source-route' in cfg }}"
+
+    - name: Show per-device results
+      ansible.builtin.debug:
+        msg: "{{ inventory_hostname }} :: {{ item.check }} => {{ 'PASS' if item.pass else 'FAIL' }} ({{ item.cis }})"
+      loop: "{{ findings }}"
+      loop_control:
+        label: "{{ item.check }}"
+
+    - name: Write findings JSON for the ingest pipeline
+      ansible.builtin.copy:
+        dest: "{{ report_dir }}/{{ inventory_hostname }}.json"
+        content: "{{ {'asset': inventory_hostname, 'generated': generated, 'findings': findings} | to_nice_json }}"
+      delegate_to: localhost

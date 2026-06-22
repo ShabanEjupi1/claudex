@@ -1,0 +1,83 @@
+---
+- name: Install baseline security packages
+  ansible.builtin.dnf:
+    name: [chrony, firewalld, fail2ban, audit, policycoreutils-python-utils]
+    state: present
+
+- name: Enable + start core services
+  ansible.builtin.service:
+    name: "{{ item }}"
+    state: started
+    enabled: true
+  loop: [chronyd, firewalld, auditd]
+
+- name: Deploy CIS-aligned SSH hardening drop-in
+  ansible.builtin.template:
+    src: sshd_hardening.conf.j2
+    dest: /etc/ssh/sshd_config.d/00-audit-hardening.conf
+    owner: root
+    group: root
+    mode: "0600"
+    validate: "/usr/sbin/sshd -t -f %s"
+  notify: restart sshd
+
+- name: Kernel network hardening
+  ansible.posix.sysctl:
+    name: "{{ item.k }}"
+    value: "{{ item.v }}"
+    sysctl_set: true
+    state: present
+    reload: true
+  loop:
+    - { k: net.ipv4.ip_forward, v: "0" }
+    - { k: net.ipv4.conf.all.accept_source_route, v: "0" }
+    - { k: net.ipv4.conf.all.accept_redirects, v: "0" }
+    - { k: net.ipv4.conf.all.send_redirects, v: "0" }
+    - { k: net.ipv4.conf.all.rp_filter, v: "1" }
+    - { k: net.ipv6.conf.all.accept_redirects, v: "0" }
+
+- name: Baseline auditd watch rules
+  ansible.builtin.copy:
+    dest: /etc/audit/rules.d/audit-platform.rules
+    owner: root
+    group: root
+    mode: "0600"
+    content: |
+      -w /etc/ssh/sshd_config -p wa -k sshd
+      -w /etc/sudoers -p wa -k scope
+      -w /etc/sudoers.d/ -p wa -k scope
+      -w {{ app_dir }} -p wa -k auditapp
+  notify: reload auditd
+
+- name: Restrict SSH to the admin subnet (rich rule)
+  ansible.posix.firewalld:
+    rich_rule: "rule family=ipv4 source address={{ allowed_admin_cidr }} service name=ssh accept"
+    permanent: true
+    immediate: true
+    state: enabled
+
+- name: Remove the broad default SSH allow (replaced by the rich rule)
+  ansible.posix.firewalld:
+    service: ssh
+    permanent: true
+    immediate: true
+    state: disabled
+
+- name: Configure fail2ban sshd jail
+  ansible.builtin.copy:
+    dest: /etc/fail2ban/jail.d/sshd.local
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      [sshd]
+      enabled = true
+      bantime = 1h
+      maxretry = 5
+  notify: restart fail2ban
+
+- name: Enable fail2ban
+  ansible.builtin.service:
+    name: fail2ban
+    state: started
+    enabled: true

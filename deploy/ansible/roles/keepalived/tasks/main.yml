@@ -1,0 +1,35 @@
+---
+- name: Install keepalived
+  ansible.builtin.dnf:
+    name: keepalived
+    state: present
+
+- name: Deploy VIP health-check script
+  ansible.builtin.template:
+    src: check_dashboard.sh.j2
+    dest: /usr/local/bin/check_dashboard.sh
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Configure keepalived
+  ansible.builtin.template:
+    src: keepalived.conf.j2
+    dest: /etc/keepalived/keepalived.conf
+    owner: root
+    group: root
+    mode: "0600"
+  notify: restart keepalived
+
+- name: Allow VRRP from the peer node
+  ansible.posix.firewalld:
+    rich_rule: "rule family=ipv4 source address={{ peer_ip }}/32 protocol value=vrrp accept"
+    permanent: true
+    immediate: true
+    state: enabled
+
+- name: Enable keepalived
+  ansible.builtin.service:
+    name: keepalived
+    state: started
+    enabled: true

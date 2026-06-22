@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# keepalived health check: this node only holds the VIP while the local
+# dashboard answers. A failed check lowers VRRP priority and triggers failover.
+exec curl -fsk --max-time 2 -H "Host: {{ dashboard_server_name }}" \
+    https://127.0.0.1/healthz >/dev/null 2>&1

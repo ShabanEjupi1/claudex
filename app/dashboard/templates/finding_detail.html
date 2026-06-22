@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}Finding {{ f.id }}{% endblock %}
+{% block content %}
+<h1>Finding #{{ f.id }}</h1>
+<dl>
+  <dt>Severity</dt><dd class="sev-{{ f.severity }}">{{ f.severity }}</dd>
+  <dt>Status</dt><dd>{{ f.status }}</dd>
+  <dt>Category</dt><dd>{{ f.category }}</dd>
+  <dt>Asset</dt><dd>{{ f.asset_hostname }} ({{ f.asset_ip }})</dd>
+  <dt>Zone</dt><dd>{{ f.asset_zone }}</dd>
+  <dt>Service</dt>
+  <dd>{% if f.service_name %}{{ f.service_name }}/{{ f.service_port }}/{{ f.service_transport }}{% endif %}</dd>
+  <dt>CIS</dt><dd>{{ f.cis_reference }}</dd>
+  <dt>CVE</dt><dd>{% if f.cve %}{{ f.cve|join(', ') }}{% endif %}</dd>
+  <dt>Detected</dt><dd>{{ f.detected_at }}</dd>
+  {# Evidence is untrusted scanner text. Jinja2 autoescaping renders it inert. #}
+  <dt>Evidence</dt><dd class="evidence">{{ f.evidence }}</dd>
+</dl>
+<p><a href="/findings">&larr; Back to findings</a></p>
+{% endblock %}

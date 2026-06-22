@@ -1,0 +1,16 @@
+# Managed by Ansible — CIS-aligned SSH hardening
+Protocol 2
+PermitRootLogin no
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+ChallengeResponseAuthentication no
+PubkeyAuthentication yes
+PermitEmptyPasswords no
+X11Forwarding no
+MaxAuthTries 4
+LoginGraceTime 30
+ClientAliveInterval 300
+ClientAliveCountMax 2
+{% if ssh_allow_group is defined %}
+AllowGroups {{ ssh_allow_group }}
+{% endif %}

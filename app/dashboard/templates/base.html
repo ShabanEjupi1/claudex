@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Audit Dashboard{% endblock %}</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+{% set _role = role.value if role else 'viewer' %}
+{% set _raw = _role in ['analyst', 'auditor', 'admin'] %}
+{% set _aud = _role in ['auditor', 'admin'] %}
+<header>
+  <strong>Internal Audit Dashboard</strong>
+  <nav>
+    <a href="/">Summary</a>
+    {% if _raw %}<a href="/findings">Findings</a>{% endif %}
+    {% if _aud %}<a href="/audit">Audit log</a>{% endif %}
+  </nav>
+  <span class="user">
+    {% if user %}{{ user.name }} ({{ _role }}) &middot; <a href="/logout">Sign out</a>{% endif %}
+  </span>
+</header>
+<main>
+{% block content %}{% endblock %}
+</main>
+</body>
+</html>

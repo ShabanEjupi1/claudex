@@ -1,0 +1,13 @@
+# Managed by Ansible — TLS-only, SCRAM auth, least privilege.
+local   all           all                              peer
+
+# Application connections, localhost, over TLS.
+hostssl audit         app_ingest     127.0.0.1/32      scram-sha-256
+hostssl audit         app_dashboard  127.0.0.1/32      scram-sha-256
+
+# App connections from the peer node (used after a failover).
+hostssl audit         app_ingest     {{ peer_ip }}/32  scram-sha-256
+hostssl audit         app_dashboard  {{ peer_ip }}/32  scram-sha-256
+
+# Streaming replication from the peer node, over TLS.
+hostssl replication   replicator     {{ peer_ip }}/32  scram-sha-256

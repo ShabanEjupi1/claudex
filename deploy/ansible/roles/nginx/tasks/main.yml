@@ -1,0 +1,57 @@
+---
+- name: Install nginx
+  ansible.builtin.dnf:
+    name: nginx
+    state: present
+
+- name: Check TLS material is present
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  register: tls_files
+  loop:
+    - "{{ tls_cert }}"
+    - "{{ tls_key }}"
+
+- name: Fail early if TLS material is missing
+  ansible.builtin.assert:
+    that: item.stat.exists
+    fail_msg: "Missing {{ item.item }} — provision it from your internal CA before deploying."
+  loop: "{{ tls_files.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+
+- name: Deploy dashboard + ingest server blocks
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/etc/nginx/conf.d/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - dashboard.conf
+    - ingest.conf
+  notify: reload nginx
+
+- name: Validate nginx configuration
+  ansible.builtin.command: nginx -t
+  changed_when: false
+
+- name: Allow dashboard (443) from the admin subnet
+  ansible.posix.firewalld:
+    rich_rule: "rule family=ipv4 source address={{ allowed_admin_cidr }} port port=443 protocol=tcp accept"
+    permanent: true
+    immediate: true
+    state: enabled
+
+- name: Allow ingest (8443) from the collector subnet
+  ansible.posix.firewalld:
+    rich_rule: "rule family=ipv4 source address={{ allowed_collector_cidr }} port port=8443 protocol=tcp accept"
+    permanent: true
+    immediate: true
+    state: enabled
+
+- name: Enable nginx
+  ansible.builtin.service:
+    name: nginx
+    state: started
+    enabled: true
