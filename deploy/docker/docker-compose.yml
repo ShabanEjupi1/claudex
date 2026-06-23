@@ -68,7 +68,9 @@ services:
     command: ["gunicorn", "app.ingest.main:app", "-k", "uvicorn.workers.UvicornWorker", "-b", "0.0.0.0:8001", "-w", "2"]
     environment:
       INGEST_DB_URL: postgresql://app_ingest:${INGEST_DB_PASSWORD}@db:5432/audit?sslmode=disable
-      INGEST_TOKEN_SHA256: ${INGEST_TOKEN_SHA256:?set in .env}
+      # Provide the plaintext token (the API hashes it) OR the precomputed hash.
+      INGEST_TOKEN: ${INGEST_TOKEN:-}
+      INGEST_TOKEN_SHA256: ${INGEST_TOKEN_SHA256:-}
       INGEST_HMAC_KEY: ${INGEST_HMAC_KEY:?set in .env}
       SCHEMA_PATH: schemas/ingest-finding.schema.json
       # No mTLS proxy in the Docker deploy — keep token+HMAC, drop the mTLS header check.
@@ -83,6 +85,25 @@ services:
     ports:
       - "127.0.0.1:8001:8001"
     networks: [audit]
+    restart: unless-stopped
+
+  # Background scanner — opt-in: `docker compose --profile scanner up -d`.
+  # Host networking so it can scan the real LAN and reach ingest on 127.0.0.1.
+  scanner:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/scanner/Dockerfile
+    profiles: ["scanner"]
+    network_mode: host
+    cap_add: [NET_RAW, NET_ADMIN]   # nmap -sS raw sockets
+    environment:
+      SCAN_TARGETS: ${SCAN_TARGETS:-}            # space-separated CIDRs to scan
+      NMAP_ARGS: ${NMAP_ARGS:--sS -sV -T4 --top-ports 1000 -Pn}
+      SCAN_INTERVAL_HOURS: ${SCAN_INTERVAL_HOURS:-6}
+      RUN_ON_START: ${RUN_ON_START:-true}
+      INGEST_URL: http://127.0.0.1:8001/v1/findings
+      INGEST_TOKEN: ${INGEST_TOKEN:?set in .env}
+      INGEST_HMAC_KEY: ${INGEST_HMAC_KEY:?set in .env}
     restart: unless-stopped
 
 volumes:

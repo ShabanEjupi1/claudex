@@ -6,6 +6,7 @@ hardcoded and never committed.
 """
 from __future__ import annotations
 
+import hashlib
 import os
 from dataclasses import dataclass
 
@@ -15,6 +16,18 @@ def _req(name: str) -> str:
     if not val:
         raise RuntimeError(f"missing required environment variable: {name}")
     return val
+
+
+def _ingest_token_sha256() -> str:
+    """Accept either the precomputed hash (INGEST_TOKEN_SHA256) or the plaintext
+    token (INGEST_TOKEN), so the API and collectors can share one value."""
+    pre = os.environ.get("INGEST_TOKEN_SHA256")
+    if pre:
+        return pre.strip().lower()
+    token = os.environ.get("INGEST_TOKEN")
+    if token:
+        return hashlib.sha256(token.encode("utf-8")).hexdigest()
+    raise RuntimeError("set INGEST_TOKEN (plaintext) or INGEST_TOKEN_SHA256")
 
 
 @dataclass(frozen=True)
@@ -29,7 +42,7 @@ class IngestConfig:
     def from_env(cls) -> "IngestConfig":
         return cls(
             db_url=_req("INGEST_DB_URL"),
-            token_sha256=_req("INGEST_TOKEN_SHA256").strip().lower(),
+            token_sha256=_ingest_token_sha256(),
             hmac_key=_req("INGEST_HMAC_KEY"),
             schema_path=os.environ.get(
                 "SCHEMA_PATH", "schemas/ingest-finding.schema.json"

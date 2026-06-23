@@ -86,6 +86,30 @@ the dashboard and the findings appear. Re-run per subnet/zone as needed.
 > Ingest is published on `127.0.0.1:8001` only — run the scan/push from the host,
 > and never put ingest on the public tunnel.
 
+### Automated background scanning (no waiting)
+
+Instead of running nmap by hand, enable the **scanner** service — a separate
+container that scans your subnets on a schedule and auto-pushes findings. It runs
+detached, so you never wait on a scan. It's intentionally *not* part of the
+read-only dashboard tier (it holds the ingest token and initiates scans).
+
+In `.env` set:
+```
+INGEST_TOKEN=<the plaintext collector token>     # the API hashes it itself
+SCAN_TARGETS=10.10.173.0/24 10.10.20.0/24         # your subnets
+NMAP_ARGS=-sS -sV -T4 --top-ports 1000 -Pn        # tune speed/coverage
+SCAN_INTERVAL_HOURS=6
+```
+Then start it (opt-in profile):
+```bash
+docker compose --profile scanner up -d --build
+docker compose logs -f scanner      # watch scan cycles
+```
+It scans each target, pushes findings, sleeps `SCAN_INTERVAL_HOURS`, repeats —
+findings just appear on the dashboard. Uses host networking + `NET_RAW` so `-sS`
+works against the LAN. Stop it with `docker compose --profile scanner down` (or
+just `docker compose stop scanner`).
+
 ## Operations
 
 ```bash

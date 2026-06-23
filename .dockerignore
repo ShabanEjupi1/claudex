@@ -1,19 +1,19 @@
-# Keep the build context small — the image only needs app/ and schemas/.
+# Keep the build context lean, but DON'T exclude files the images copy
+# (app image: app/ + schemas/; scanner image: scripts/discovery/ + deploy/docker/scanner/).
 .git
 .gitignore
-ansible/
-deploy/
-docs/
-examples/
-scripts/
-schemas/*.md
-audit-output/
+**/.env
 **/__pycache__/
 **/*.pyc
 .venv/
 .pytest_cache/
+audit-output/
 *.nmap
 *.gnmap
 *.xml
-app/.env
+docs/
+deploy/ansible/
+deploy/*.md
+deploy/docker/*.md
+schemas/*.md
 app/tests/
