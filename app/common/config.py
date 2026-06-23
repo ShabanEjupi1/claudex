@@ -46,6 +46,7 @@ class DashboardConfig:
     oidc_redirect_url: str
     role_claim: str
     zones_claim: str
+    admin_emails: frozenset[str]  # emails granted ADMIN regardless of group claim
 
     @classmethod
     def from_env(cls) -> "DashboardConfig":
@@ -58,4 +59,11 @@ class DashboardConfig:
             oidc_redirect_url=_req("OIDC_REDIRECT_URL"),
             role_claim=os.environ.get("OIDC_ROLE_CLAIM", "groups"),
             zones_claim=os.environ.get("OIDC_ZONES_CLAIM", "zones"),
+            # Optional break-glass: comma-separated emails always treated as ADMIN.
+            # Useful for single-owner deployments without IdP group provisioning.
+            admin_emails=frozenset(
+                e.strip().lower()
+                for e in os.environ.get("ADMIN_EMAILS", "").split(",")
+                if e.strip()
+            ),
         )

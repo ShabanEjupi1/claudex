@@ -101,6 +101,11 @@ def _session_user(request: Request) -> dict | None:
 def _ctx(request: Request) -> dict:
     user = _session_user(request)
     role = role_from_claims(user["claims"], cfg.role_claim) if user else Role.VIEWER
+    # Break-glass: emails in ADMIN_EMAILS get ADMIN even without a group claim.
+    if user and cfg.admin_emails:
+        email = str(user["claims"].get("email") or "").lower()
+        if email in cfg.admin_emails:
+            role = Role.ADMIN
     zones = zones_from_claims(user["claims"], cfg.zones_claim) if user else []
     return {"user": user, "role": role, "zones": zones}
 
