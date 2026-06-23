@@ -15,3 +15,9 @@ vault_session_secret: CHANGE_ME          # >= 32 bytes
 vault_oidc_client_secret: CHANGE_ME
 
 vault_keepalived_auth_pass: CHANGE_ME    # VRRP shared secret (max 8 chars)
+
+# Cloudflare Tunnel connector token (only if cloudflare_tunnel_enabled: true).
+# The long base64 string from `cloudflared service install <TOKEN>` / the Zero
+# Trust dashboard. It IS a credential (it embeds the tunnel secret) — never commit
+# it in plaintext, and rotate it in Cloudflare if it is ever disclosed.
+vault_cf_tunnel_token: CHANGE_ME

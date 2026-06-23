@@ -1,0 +1,19 @@
+# Keep the build context small — the image only needs app/ and schemas/.
+.git
+.gitignore
+ansible/
+deploy/
+docs/
+examples/
+scripts/
+schemas/*.md
+audit-output/
+**/__pycache__/
+**/*.pyc
+.venv/
+.pytest_cache/
+*.nmap
+*.gnmap
+*.xml
+app/.env
+app/tests/

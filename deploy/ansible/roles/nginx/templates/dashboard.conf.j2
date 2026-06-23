@@ -12,9 +12,15 @@ server {
 
     add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
 
+{% if dashboard_public %}
+    # PUBLIC exposure: any source may reach TLS; access control is OIDC + rate
+    # limiting (see ratelimit.conf and deploy/PUBLIC-EXPOSURE.md).
+    limit_req zone=dash burst=20 nodelay;
+{% else %}
     # Only the admin/jump-host subnet may reach the dashboard.
     allow {{ allowed_admin_cidr }};
     deny  all;
+{% endif %}
 
     location / {
         proxy_pass http://127.0.0.1:8002;

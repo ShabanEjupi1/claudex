@@ -20,3 +20,7 @@
     - nginx
     - keepalived
     - monitoring
+    # Public reachability via outbound-only Cloudflare Tunnel (no inbound ports).
+    # Enable per deploy/CLOUDFLARE-TUNNEL.md; no-op while disabled.
+    - role: cloudflared
+      when: cloudflare_tunnel_enabled | default(false)

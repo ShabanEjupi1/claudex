@@ -39,6 +39,8 @@ collection toward lower-trust presentation, never the reverse.
 | `examples/finding.example.json` | A sample finding that validates against the schema. |
 | `app/` | The dashboard application: write-only ingest API + RBAC read UI (FastAPI + PostgreSQL). |
 | `deploy/ansible/` | Active-passive HA deployment for the two ProLiant nodes (keepalived VIP, nginx mTLS, monitoring). |
+| `deploy/CLOUDFLARE-TUNNEL.md` | **Recommended** way to reach the dashboard from outside — outbound-only tunnel, no inbound ports. |
+| `deploy/PUBLIC-EXPOSURE.md` | Alternative: raw public `:443` via router port-forward (single WAN IP). Higher attack surface. |
 
 ## Quick start
 

@@ -1,0 +1,90 @@
+# Containerised audit platform — runs alongside your existing Docker stack.
+# Postgres + ingest API + read dashboard. The dashboard is published on
+# 127.0.0.1:8002 so the HOST cloudflared (audit.spacecode.tech) can reach it.
+# Nothing here touches the host firewall, sshd, or your other sites.
+#
+#   cd deploy/docker
+#   cp .env.example .env   # fill in secrets + OIDC
+#   docker compose up -d --build
+name: audit
+
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: audit_admin
+      POSTGRES_DB: audit
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set in .env}
+      INGEST_DB_PASSWORD: ${INGEST_DB_PASSWORD:?set in .env}
+      DASHBOARD_DB_PASSWORD: ${DASHBOARD_DB_PASSWORD:?set in .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ../../app/db/schema.sql:/schema.sql:ro
+      - ./initdb:/docker-entrypoint-initdb.d:ro
+    networks: [audit]
+    restart: unless-stopped
+    # DB port is NOT published to the host — only reachable on the audit network.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U audit_admin -d audit"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  dashboard:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+    command: ["gunicorn", "app.dashboard.main:app", "-k", "uvicorn.workers.UvicornWorker", "-b", "0.0.0.0:8002", "-w", "2"]
+    environment:
+      # In-cluster DB traffic stays on the private docker network; sslmode=disable
+      # is acceptable here (the DB port is never exposed). Switch to verify-full +
+      # mounted certs if you want in-cluster TLS.
+      DASHBOARD_DB_URL: postgresql://app_dashboard:${DASHBOARD_DB_PASSWORD}@db:5432/audit?sslmode=disable
+      SESSION_SECRET: ${SESSION_SECRET:?set in .env}
+      OIDC_ISSUER: ${OIDC_ISSUER:?set in .env}
+      OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:?set in .env}
+      OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:?set in .env}
+      OIDC_REDIRECT_URL: ${OIDC_REDIRECT_URL:?set in .env}
+      OIDC_ROLE_CLAIM: ${OIDC_ROLE_CLAIM:-groups}
+      OIDC_ZONES_CLAIM: ${OIDC_ZONES_CLAIM:-zones}
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8002:8002"   # host cloudflared -> http://localhost:8002
+    networks: [audit]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0) if urllib.request.urlopen('http://127.0.0.1:8002/healthz').status==200 else sys.exit(1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  ingest:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+    command: ["gunicorn", "app.ingest.main:app", "-k", "uvicorn.workers.UvicornWorker", "-b", "0.0.0.0:8001", "-w", "2"]
+    environment:
+      INGEST_DB_URL: postgresql://app_ingest:${INGEST_DB_PASSWORD}@db:5432/audit?sslmode=disable
+      INGEST_TOKEN_SHA256: ${INGEST_TOKEN_SHA256:?set in .env}
+      INGEST_HMAC_KEY: ${INGEST_HMAC_KEY:?set in .env}
+      SCHEMA_PATH: schemas/ingest-finding.schema.json
+    depends_on:
+      db:
+        condition: service_healthy
+    # NOTE: every ingest request requires the `X-SSL-Client-Verify: SUCCESS`
+    # header that an mTLS-terminating nginx normally sets — so the API rejects
+    # all calls until you put such a proxy in front. Do NOT expose ingest on the
+    # tunnel. Published to localhost only for an internal mTLS front / testing.
+    ports:
+      - "127.0.0.1:8001:8001"
+    networks: [audit]
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+
+networks:
+  audit:
+    driver: bridge

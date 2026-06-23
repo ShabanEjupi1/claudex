@@ -4,18 +4,35 @@
 # Repo root on the control node (this file is in deploy/ansible/group_vars).
 app_repo_dir: "{{ playbook_dir }}/../.."
 
-# Floating VIP that clients/collectors actually target (pick a free address).
+# Floating VIP for internal LAN clients hitting the dashboard directly. It lives
+# on the CLIENT interface (eno1). NOTE: eno1 is DHCP, so set vip_address to a free
+# STATIC address on whatever subnet eno1 currently gets (and ideally pin eno1 with
+# a DHCP reservation so that subnet stops moving). If external access is only via
+# the Cloudflare Tunnel + admin is via Cockpit, you may not need the VIP at all —
+# drop the keepalived role from site.yml in that case.
 vip_address: 10.10.173.20
 vip_prefix: 24
-vip_interface: eth0
+vip_interface: eno1
 vip_router_id: 51
 
-# The other node, derived automatically (used for replication + pg_hba).
+# The other node, derived from ansible_host — i.e. the STATIC 192.168.99.x peer
+# link (see inventory). Used for replication, pg_hba, VRRP firewall.
 peer_ip: "{{ hostvars[(groups['proliant'] | difference([inventory_hostname]))[0]].ansible_host }}"
 
-# Service identities
+# Service identities. When using the Cloudflare Tunnel, set dashboard_server_name
+# to the PUBLIC tunnel hostname so the app's OIDC redirect URL matches the origin
+# users actually arrive on (rendered into OIDC_REDIRECT_URL in app.env.j2).
 dashboard_server_name: dashboard.internal
 ingest_server_name: ingest.internal
+
+# ---- Cloudflare Tunnel (outbound-only public access; see CLOUDFLARE-TUNNEL.md) ----
+# Off by default — the role is a no-op until enabled. Enabling needs no inbound
+# firewall/router change; cloudflared dials out to Cloudflare from both nodes.
+# Remotely-managed (token) tunnel: the token lives in vault, and the public
+# hostname below is mapped to http://localhost:8002 in the Cloudflare dashboard.
+cloudflare_tunnel_enabled: false
+cloudflare_public_hostname: audit.spacecode.tech    # the Access-protected hostname
+cloudflare_tunnel_protocol: auto               # auto (quic) | http2 (if egress UDP blocked)
 
 # Application layout
 app_user: auditapp
@@ -25,6 +42,13 @@ app_dir: /opt/audit
 tls_cert: /etc/pki/tls/certs/audit.crt
 tls_key: /etc/pki/tls/private/audit.key
 ingest_client_ca: /etc/pki/audit/collector-ca.crt   # CA that signs collector client certs
+
+# Public exposure switch. When false (default) the dashboard is reachable only
+# from allowed_admin_cidr (nginx allow/deny + firewalld) — the internal Tier-0
+# design. When true, nginx + firewalld accept 443 from ANY source and access
+# control falls to OIDC + TLS + rate limiting. See deploy/PUBLIC-EXPOSURE.md.
+# Never expose ingest (8443) — leave allowed_collector_cidr private regardless.
+dashboard_public: false
 
 # Network access control (least privilege)
 allowed_admin_cidr: 10.10.10.0/24        # admin/jump-host subnet -> dashboard (443)

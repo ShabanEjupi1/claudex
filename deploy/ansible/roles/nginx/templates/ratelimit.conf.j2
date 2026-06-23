@@ -1,0 +1,3 @@
+# Managed by Ansible. http-scope rate-limit zone used by the dashboard server
+# block when dashboard_public is true. 10MB ~ 160k unique client IPs.
+limit_req_zone $binary_remote_addr zone=dash:10m rate=10r/s;

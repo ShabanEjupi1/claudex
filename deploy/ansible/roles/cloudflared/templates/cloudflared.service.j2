@@ -1,0 +1,27 @@
+# Managed by Ansible. Runs the remotely-managed tunnel using the token in
+# /etc/cloudflared/cloudflared.env (TUNNEL_TOKEN).
+[Unit]
+Description=Cloudflare Tunnel (audit dashboard)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=cloudflared
+Group=cloudflared
+EnvironmentFile=/etc/cloudflared/cloudflared.env
+ExecStart=/usr/bin/cloudflared --no-autoupdate tunnel run
+Restart=on-failure
+RestartSec=5s
+
+# Sandboxing — cloudflared only needs outbound network + its config dir.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadOnlyPaths=/etc/cloudflared
+AmbientCapabilities=
+CapabilityBoundingSet=
+
+[Install]
+WantedBy=multi-user.target
