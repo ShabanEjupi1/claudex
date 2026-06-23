@@ -47,6 +47,7 @@ services:
       OIDC_REDIRECT_URL: ${OIDC_REDIRECT_URL:?set in .env}
       OIDC_ROLE_CLAIM: ${OIDC_ROLE_CLAIM:-groups}
       OIDC_ZONES_CLAIM: ${OIDC_ZONES_CLAIM:-zones}
+      ADMIN_EMAILS: ${ADMIN_EMAILS:-}
     depends_on:
       db:
         condition: service_healthy
