@@ -23,6 +23,7 @@ class IngestConfig:
     token_sha256: str    # sha256(hex) of the expected bearer token
     hmac_key: str        # shared key for the X-Signature body HMAC
     schema_path: str     # path to ingest-finding.schema.json
+    require_mtls: bool    # enforce the nginx-set mTLS header (set false for internal-only ingest)
 
     @classmethod
     def from_env(cls) -> "IngestConfig":
@@ -33,6 +34,10 @@ class IngestConfig:
             schema_path=os.environ.get(
                 "SCHEMA_PATH", "schemas/ingest-finding.schema.json"
             ),
+            # When there is no mTLS-terminating proxy in front (e.g. the Docker
+            # deploy), set INGEST_REQUIRE_MTLS=false. Bearer token + HMAC still apply.
+            require_mtls=os.environ.get("INGEST_REQUIRE_MTLS", "true").strip().lower()
+            not in ("false", "0", "no"),
         )
 
 

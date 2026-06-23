@@ -71,6 +71,8 @@ services:
       INGEST_TOKEN_SHA256: ${INGEST_TOKEN_SHA256:?set in .env}
       INGEST_HMAC_KEY: ${INGEST_HMAC_KEY:?set in .env}
       SCHEMA_PATH: schemas/ingest-finding.schema.json
+      # No mTLS proxy in the Docker deploy — keep token+HMAC, drop the mTLS header check.
+      INGEST_REQUIRE_MTLS: ${INGEST_REQUIRE_MTLS:-false}
     depends_on:
       db:
         condition: service_healthy

@@ -57,6 +57,35 @@ The host `cloudflared` reaches the published `127.0.0.1:8002`. Then add a
    data — and it must **never** be exposed on the tunnel. The dashboard is the part
    that goes public.
 
+## Loading data (the dashboard starts empty — by design)
+
+The dashboard only displays findings that collectors **push in**; it does not
+scan. To populate it from your network with nmap:
+
+```bash
+# 0. one-time: pick a collector token, store its hash in .env, restart ingest
+TOKEN=$(openssl rand -hex 32)
+sed -i "s#^INGEST_TOKEN_SHA256=.*#INGEST_TOKEN_SHA256=$(printf '%s' "$TOKEN" | sha256sum | cut -d' ' -f1)#" .env
+docker compose up -d ingest
+
+# 1. scan (SYN+UDP+version+OS needs root; -sT works unprivileged)
+sudo nmap -sS -sU -sV -O -Pn -oX scan.xml 10.10.173.0/24
+
+# 2. convert + push (INGEST_HMAC_KEY is the value from .env)
+export INGEST_URL=http://127.0.0.1:8001/v1/findings
+export INGEST_TOKEN=$TOKEN
+export INGEST_HMAC_KEY=$(grep ^INGEST_HMAC_KEY= .env | cut -d= -f2-)
+python3 ../../scripts/discovery/nmap_to_findings.py scan.xml --zone core --collector "$(hostname)"
+```
+
+Each open port becomes a finding; cleartext/legacy services (telnet, FTP, SNMP
+v1/2c, HTTP mgmt, r-services…) are flagged at higher severity, the rest are
+informational `open-port`s. Use `--dry-run` to preview without sending. Refresh
+the dashboard and the findings appear. Re-run per subnet/zone as needed.
+
+> Ingest is published on `127.0.0.1:8001` only — run the scan/push from the host,
+> and never put ingest on the public tunnel.
+
 ## Operations
 
 ```bash

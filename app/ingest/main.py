@@ -94,8 +94,8 @@ async def ingest_finding(
     x_signature: str | None = Header(default=None),
     x_ssl_client_verify: str | None = Header(default=None),
 ):
-    # 1) mTLS result from nginx.
-    if x_ssl_client_verify != "SUCCESS":
+    # 1) mTLS result from nginx (enforced unless INGEST_REQUIRE_MTLS=false).
+    if cfg.require_mtls and x_ssl_client_verify != "SUCCESS":
         raise HTTPException(status_code=401, detail="client certificate not verified")
 
     # 2) Bearer token (hash compare, constant time).
