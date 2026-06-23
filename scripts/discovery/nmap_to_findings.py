@@ -70,8 +70,30 @@ def _classify(name: str, transport: str, port: int):
     return ("open-port", "info", "Open port observed; review whether it should be exposed.")
 
 
+def _load_root(path: str):
+    """Parse nmap XML, salvaging a truncated file (interrupted scan with no
+    closing </nmaprun>) by cutting to the last complete <host> element."""
+    with open(path, "rb") as fh:
+        data = fh.read()
+    try:
+        return ET.fromstring(data)
+    except ET.ParseError:
+        text = data.decode("utf-8", "replace")
+        idx = text.rfind("</host>")
+        if idx == -1:
+            raise SystemExit(
+                f"ERROR: {path} has no complete <host> elements — the scan didn't "
+                "finish (no closing </nmaprun>). Re-run nmap and let it complete."
+            )
+        sys.stderr.write(
+            f"WARNING: {path} was truncated (interrupted scan); "
+            "salvaging up to the last complete host.\n"
+        )
+        return ET.fromstring(text[: idx + len("</host>")] + "\n</nmaprun>\n")
+
+
 def _findings_from_xml(path: str, collector: str, zone: str | None):
-    root = ET.parse(path).getroot()
+    root = _load_root(path)
     default_ts = _iso(root.get("start"))
     out = []
     for host in root.findall("host"):
