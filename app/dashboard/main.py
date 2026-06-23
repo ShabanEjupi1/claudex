@@ -41,7 +41,7 @@ oauth.register(
     client_id=cfg.oidc_client_id,
     client_secret=cfg.oidc_client_secret,
     server_metadata_url=f"{cfg.oidc_issuer.rstrip('/')}/.well-known/openid-configuration",
-    client_kwargs={"scope": "openid profile email"},
+    client_kwargs={"scope": "openid email profile groups"},
 )
 
 _FIELDS = (
