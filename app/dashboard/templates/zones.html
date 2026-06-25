@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}Zones{% endblock %}
+{% block content %}
+<h1>Zones <span class="muted">({{ rows|length }})</span></h1>
+<p class="muted">Findings grouped by network zone. Click a zone to drill in.</p>
+<table>
+  <thead><tr><th>Zone</th><th>Assets</th><th>Critical+High</th><th>Total findings</th></tr></thead>
+  <tbody>
+  {% for r in rows %}
+    <tr>
+      <td><a href="/findings?zone={{ r.zone }}">{{ r.zone }}</a></td>
+      <td>{{ r.assets }}</td>
+      <td>{% if r.highrisk %}<span class="sev-high">{{ r.highrisk }}</span>{% else %}0{% endif %}</td>
+      <td>{{ r.total }}</td>
+    </tr>
+  {% endfor %}
+  {% if not rows %}<tr><td colspan="4" class="muted">No zones yet — run a scan.</td></tr>{% endif %}
+  </tbody>
+</table>
+{% endblock %}

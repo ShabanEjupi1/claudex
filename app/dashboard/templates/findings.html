@@ -1,12 +1,31 @@
 {% extends "base.html" %}
 {% block title %}Findings{% endblock %}
 {% block content %}
-<h1>Findings <span class="muted">({{ rows|length }})</span></h1>
+<h1>Findings <span class="muted">({{ rows|length }}{% if rows|length == 500 %}+, showing latest 500{% endif %})</span></h1>
+
+<form method="get" class="filters">
+  <input type="search" name="q" value="{{ active.q or '' }}" placeholder="host, IP, service, CVE, text…">
+  <select name="severity"><option value="">— severity —</option>
+    {% for s in severities %}<option value="{{ s }}" {% if active.severity == s %}selected{% endif %}>{{ s }}</option>{% endfor %}
+  </select>
+  <select name="status"><option value="">— status —</option>
+    {% for s in statuses %}<option value="{{ s }}" {% if active.status == s %}selected{% endif %}>{{ s }}</option>{% endfor %}
+  </select>
+  <select name="category"><option value="">— category —</option>
+    {% for c in categories %}<option value="{{ c }}" {% if active.category == c %}selected{% endif %}>{{ c }}</option>{% endfor %}
+  </select>
+  <select name="zone"><option value="">— zone —</option>
+    {% for z in zone_opts %}<option value="{{ z }}" {% if active.zone == z %}selected{% endif %}>{{ z }}</option>{% endfor %}
+  </select>
+  <button type="submit">Filter</button>
+  {% if active %}<a href="/findings">Reset</a>{% endif %}
+</form>
+
 {% if can_export %}<p><a href="/export.csv">Export CSV</a></p>{% endif %}
 <table>
   <thead><tr>
     <th>Detected</th><th>Sev</th><th>Status</th><th>Category</th>
-    <th>Asset</th><th>Zone</th><th>Service</th>
+    <th>Asset</th><th>Zone</th><th>Service</th><th>CVE</th>
   </tr></thead>
   <tbody>
   {% for r in rows %}
@@ -18,8 +37,10 @@
       <td><a href="/findings/{{ r.id }}">{{ r.asset_hostname or r.asset_ip }}</a></td>
       <td>{{ r.asset_zone }}</td>
       <td>{% if r.service_name %}{{ r.service_name }}/{{ r.service_port }}{% endif %}</td>
+      <td>{% if r.cve %}{{ r.cve|join(', ') }}{% endif %}</td>
     </tr>
   {% endfor %}
+  {% if not rows %}<tr><td colspan="8" class="muted">No findings match.</td></tr>{% endif %}
   </tbody>
 </table>
 {% endblock %}

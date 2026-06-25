@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}Assets{% endblock %}
+{% block content %}
+<h1>Assets <span class="muted">({{ rows|length }})</span></h1>
+<p class="muted">Devices ranked by risk. Click an asset to see its findings.</p>
+<table>
+  <thead><tr>
+    <th>Asset</th><th>IP</th><th>Zone</th>
+    <th>Critical</th><th>High</th><th>Medium</th><th>Total</th>
+  </tr></thead>
+  <tbody>
+  {% for r in rows %}
+    <tr>
+      <td><a href="/findings?q={{ r.ip }}">{{ r.hostname or r.ip }}</a></td>
+      <td>{{ r.ip }}</td>
+      <td>{{ r.zone }}</td>
+      <td>{% if r.crit %}<span class="sev-critical">{{ r.crit }}</span>{% else %}0{% endif %}</td>
+      <td>{% if r.high %}<span class="sev-high">{{ r.high }}</span>{% else %}0{% endif %}</td>
+      <td>{% if r.med %}<span class="sev-medium">{{ r.med }}</span>{% else %}0{% endif %}</td>
+      <td>{{ r.total }}</td>
+    </tr>
+  {% endfor %}
+  {% if not rows %}<tr><td colspan="7" class="muted">No assets yet — run a scan.</td></tr>{% endif %}
+  </tbody>
+</table>
+{% endblock %}

@@ -125,6 +125,42 @@ def _audit(actor: str, actor_role: str, action: str, request: Request,
         conn.commit()
 
 
+_SEVERITIES = ["critical", "high", "medium", "low", "info"]
+_STATUSES = ["open", "in-progress", "remediated", "accepted-risk", "false-positive"]
+
+
+def _zone_conds(zones: list[str] | None):
+    """Analyst need-to-know zone restriction -> (conds, params)."""
+    if zones is None:
+        return [], []
+    if not zones:
+        return ["false"], []
+    return ["asset_zone = ANY(%s)"], [list(zones)]
+
+
+def _finding_where(request: Request, zones: list[str] | None):
+    """Build a parameterized WHERE from the query filters + zone limit."""
+    conds, params = _zone_conds(zones)
+    active: dict[str, str] = {}
+    for key, col in (("severity", "severity"), ("status", "status"),
+                     ("category", "category"), ("zone", "asset_zone")):
+        val = request.query_params.get(key)
+        if val:
+            conds.append(f"{col} = %s")
+            params.append(val)
+            active[key] = val
+    q = (request.query_params.get("q") or "").strip()
+    if q:
+        like = f"%{q}%"
+        conds.append("(asset_hostname ILIKE %s OR host(asset_ip) ILIKE %s OR "
+                     "service_name ILIKE %s OR coalesce(array_to_string(cve, ','), '') ILIKE %s "
+                     "OR coalesce(evidence, '') ILIKE %s)")
+        params += [like, like, like, like, like]
+        active["q"] = q
+    where = (" WHERE " + " AND ".join(conds)) if conds else ""
+    return where, params, active
+
+
 # --------------------------------------------------------------------------- #
 # Auth routes
 # --------------------------------------------------------------------------- #
@@ -162,16 +198,27 @@ async def summary(request: Request):
     ctx = _ctx(request)
     if not ctx["user"]:
         return RedirectResponse("/login", status_code=302)
+    open_f = "status NOT IN ('remediated','false-positive')"
     with pool.connection() as conn, conn.cursor() as cur:
-        cur.execute(
-            "SELECT severity, count(*) FROM findings "
-            "WHERE status NOT IN ('remediated','false-positive') GROUP BY severity"
-        )
+        cur.execute(f"SELECT severity, count(*) FROM findings WHERE {open_f} GROUP BY severity")
         by_sev = {row[0]: row[1] for row in cur.fetchall()}
+        cur.execute(f"SELECT category, count(*) FROM findings WHERE {open_f} "
+                    "GROUP BY category ORDER BY 2 DESC")
+        by_cat = cur.fetchall()
+        top_assets = []
+        if can_view_raw_findings(ctx["role"]):
+            cur.execute(
+                "SELECT host(asset_ip) AS ip, max(asset_hostname) AS hostname, "
+                "count(*) FILTER (WHERE severity IN ('critical','high')) AS highrisk, "
+                f"count(*) AS total FROM findings WHERE {open_f} "
+                "GROUP BY asset_ip ORDER BY highrisk DESC, total DESC LIMIT 5")
+            top_assets = [dict(zip(["ip", "hostname", "highrisk", "total"], r))
+                          for r in cur.fetchall()]
     _audit(ctx["user"]["name"], ctx["role"].value, "view_summary", request)
     return templates.TemplateResponse(
         "summary.html",
-        {"request": request, "by_sev": by_sev, **ctx,
+        {"request": request, "by_sev": by_sev, "by_cat": by_cat,
+         "top_assets": top_assets, "severities": _SEVERITIES, **ctx,
          "can_view_raw": can_view_raw_findings(ctx["role"]),
          "can_audit": can_view_audit(ctx["role"])},
     )
@@ -186,25 +233,74 @@ async def list_findings(request: Request):
         raise HTTPException(status_code=403, detail="not authorized for raw findings")
 
     zones = zone_filter(ctx["role"], ctx["zones"])
+    where, params, active = _finding_where(request, zones)
     with pool.connection() as conn, conn.cursor() as cur:
-        if zones is None:
-            cur.execute(f"SELECT {_FIELDS} FROM findings "
-                        "ORDER BY detected_at DESC LIMIT 500")
-        elif not zones:
-            cur.execute(f"SELECT {_FIELDS} FROM findings WHERE false")
-        else:
-            cur.execute(f"SELECT {_FIELDS} FROM findings WHERE asset_zone = ANY(%s) "
-                        "ORDER BY detected_at DESC LIMIT 500", (zones,))
+        cur.execute(f"SELECT {_FIELDS} FROM findings{where} "
+                    "ORDER BY detected_at DESC LIMIT 500", params)
         cols = [d.name for d in cur.description]
         rows = [dict(zip(cols, r)) for r in cur.fetchall()]
+        cur.execute("SELECT DISTINCT category FROM findings ORDER BY 1")
+        categories = [r[0] for r in cur.fetchall()]
+        cur.execute("SELECT DISTINCT asset_zone FROM findings "
+                    "WHERE asset_zone IS NOT NULL ORDER BY 1")
+        zone_opts = [r[0] for r in cur.fetchall()]
 
     _audit(ctx["user"]["name"], ctx["role"].value, "list_findings", request,
-           detail=f"{len(rows)} rows")
+           detail=f"{len(rows)} rows; filters={active}")
     return templates.TemplateResponse(
         "findings.html",
         {"request": request, "rows": rows, **ctx,
-         "can_export": can_export(ctx["role"])},
+         "can_export": can_export(ctx["role"]),
+         "active": active, "severities": _SEVERITIES, "statuses": _STATUSES,
+         "categories": categories, "zone_opts": zone_opts},
     )
+
+
+@app.get("/assets", response_class=HTMLResponse)
+async def assets_view(request: Request):
+    ctx = _ctx(request)
+    if not ctx["user"]:
+        return RedirectResponse("/login", status_code=302)
+    if not can_view_raw_findings(ctx["role"]):
+        raise HTTPException(status_code=403, detail="not authorized")
+    conds, params = _zone_conds(zone_filter(ctx["role"], ctx["zones"]))
+    where = (" WHERE " + " AND ".join(conds)) if conds else ""
+    with pool.connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT host(asset_ip) AS ip, max(asset_hostname) AS hostname, "
+            "max(asset_zone) AS zone, count(*) AS total, "
+            "count(*) FILTER (WHERE severity='critical') AS crit, "
+            "count(*) FILTER (WHERE severity='high') AS high, "
+            "count(*) FILTER (WHERE severity='medium') AS med "
+            f"FROM findings{where} GROUP BY asset_ip "
+            "ORDER BY crit DESC, high DESC, med DESC, total DESC LIMIT 500", params)
+        cols = [d.name for d in cur.description]
+        rows = [dict(zip(cols, r)) for r in cur.fetchall()]
+    _audit(ctx["user"]["name"], ctx["role"].value, "view_assets", request,
+           detail=f"{len(rows)} assets")
+    return templates.TemplateResponse("assets.html", {"request": request, "rows": rows, **ctx})
+
+
+@app.get("/zones", response_class=HTMLResponse)
+async def zones_view(request: Request):
+    ctx = _ctx(request)
+    if not ctx["user"]:
+        return RedirectResponse("/login", status_code=302)
+    if not can_view_raw_findings(ctx["role"]):
+        raise HTTPException(status_code=403, detail="not authorized")
+    conds, params = _zone_conds(zone_filter(ctx["role"], ctx["zones"]))
+    where = (" WHERE " + " AND ".join(conds)) if conds else ""
+    with pool.connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT coalesce(asset_zone,'(unzoned)') AS zone, "
+            "count(DISTINCT asset_ip) AS assets, count(*) AS total, "
+            "count(*) FILTER (WHERE severity IN ('critical','high')) AS highrisk "
+            f"FROM findings{where} GROUP BY asset_zone "
+            "ORDER BY highrisk DESC, total DESC", params)
+        cols = [d.name for d in cur.description]
+        rows = [dict(zip(cols, r)) for r in cur.fetchall()]
+    _audit(ctx["user"]["name"], ctx["role"].value, "view_zones", request)
+    return templates.TemplateResponse("zones.html", {"request": request, "rows": rows, **ctx})
 
 
 @app.get("/findings/{finding_id}", response_class=HTMLResponse)

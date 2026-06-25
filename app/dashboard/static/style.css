@@ -16,3 +16,12 @@ th, td { text-align: left; padding: .35rem .6rem; border-bottom: 1px solid #e1e4
 .sev-medium { color: #b08800; }
 .sev-low, .sev-info { color: #6a737d; }
 dl dt { font-weight: 600; margin-top: .5rem; }
+h2 { font-size: 1rem; margin: 1rem 0 .4rem; }
+.filters { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center;
+           margin: .6rem 0 1rem; }
+.filters input[type=search] { padding: .3rem .5rem; min-width: 16rem; }
+.filters select, .filters button { padding: .3rem .4rem; }
+.filters button { cursor: pointer; }
+.cards { display: flex; flex-wrap: wrap; gap: 2rem; align-items: flex-start; }
+.cards section { min-width: 16rem; }
+td a, th a { color: #0969da; text-decoration: none; }

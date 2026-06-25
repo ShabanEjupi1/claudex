@@ -2,14 +2,55 @@
 {% block title %}Summary{% endblock %}
 {% block content %}
 <h1>Posture summary <span class="muted">(open findings)</span></h1>
+
+<div class="cards">
+  <section>
+    <h2>By severity</h2>
+    <table>
+      <thead><tr><th>Severity</th><th>Count</th></tr></thead>
+      <tbody>
+      {% for sev in severities %}
+        <tr><td class="sev-{{ sev }}">{{ sev }}</td><td>
+          {% if can_view_raw and by_sev.get(sev, 0) %}<a href="/findings?severity={{ sev }}">{{ by_sev.get(sev, 0) }}</a>
+          {% else %}{{ by_sev.get(sev, 0) }}{% endif %}
+        </td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2>By category</h2>
+    <table>
+      <thead><tr><th>Category</th><th>Count</th></tr></thead>
+      <tbody>
+      {% for cat, n in by_cat %}
+        <tr><td>
+          {% if can_view_raw %}<a href="/findings?category={{ cat }}">{{ cat }}</a>{% else %}{{ cat }}{% endif %}
+        </td><td>{{ n }}</td></tr>
+      {% endfor %}
+      {% if not by_cat %}<tr><td colspan="2" class="muted">No open findings yet.</td></tr>{% endif %}
+      </tbody>
+    </table>
+  </section>
+</div>
+
+{% if top_assets %}
+<h2>Top at-risk assets</h2>
 <table>
-  <thead><tr><th>Severity</th><th>Count</th></tr></thead>
+  <thead><tr><th>Asset</th><th>Critical+High</th><th>Total</th></tr></thead>
   <tbody>
-  {% for sev in ['critical', 'high', 'medium', 'low', 'info'] %}
-    <tr><td class="sev-{{ sev }}">{{ sev }}</td><td>{{ by_sev.get(sev, 0) }}</td></tr>
+  {% for a in top_assets %}
+    <tr>
+      <td><a href="/findings?q={{ a.ip }}">{{ a.hostname or a.ip }}</a></td>
+      <td>{% if a.highrisk %}<span class="sev-high">{{ a.highrisk }}</span>{% else %}0{% endif %}</td>
+      <td>{{ a.total }}</td>
+    </tr>
   {% endfor %}
   </tbody>
 </table>
+{% endif %}
+
 {% if not can_view_raw %}
 <p class="muted">Your role sees aggregate posture only. Raw findings require an
 analyst, auditor, or admin role.</p>
