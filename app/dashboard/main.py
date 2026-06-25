@@ -10,6 +10,7 @@ Security properties:
 from __future__ import annotations
 
 import csv
+import datetime as dt
 import io
 from contextlib import asynccontextmanager
 
@@ -31,6 +32,7 @@ from app.dashboard.rbac import (
     zone_filter,
     zones_from_claims,
 )
+from app.dashboard.remediation import playbook_for
 
 cfg = DashboardConfig.from_env()
 pool = make_pool(cfg.db_url)
@@ -310,6 +312,49 @@ async def zones_view(request: Request):
     return templates.TemplateResponse("zones.html", {"request": request, "rows": rows, **ctx})
 
 
+@app.get("/report", response_class=HTMLResponse)
+async def report(request: Request):
+    ctx = _ctx(request)
+    if not ctx["user"]:
+        return RedirectResponse("/login", status_code=302)
+    if not can_view_raw_findings(ctx["role"]):
+        raise HTTPException(status_code=403, detail="not authorized")
+    zone = request.query_params.get("zone")
+    conds, params = _zone_conds(zone_filter(ctx["role"], ctx["zones"]))
+    if zone == "(unzoned)":
+        conds.append("asset_zone IS NULL")
+    elif zone:
+        conds.append("asset_zone = %s")
+        params.append(zone)
+    where = (" WHERE " + " AND ".join(conds)) if conds else ""
+    rank = "array_position(ARRAY['critical','high','medium','low','info']::text[], severity)"
+    with pool.connection() as conn, conn.cursor() as cur:
+        cur.execute(f"SELECT severity, count(*) FROM current_findings{where} GROUP BY severity", params)
+        by_sev = {r[0]: r[1] for r in cur.fetchall()}
+        cur.execute(f"SELECT category, count(*) FROM current_findings{where} "
+                    "GROUP BY category ORDER BY 2 DESC", params)
+        by_cat = cur.fetchall()
+        cur.execute(
+            "SELECT host(asset_ip) AS ip, max(asset_hostname) AS hostname, "
+            "max(asset_zone) AS zone, "
+            "count(*) FILTER (WHERE severity IN ('critical','high')) AS highrisk, "
+            f"count(*) AS total FROM current_findings{where} "
+            "GROUP BY asset_ip ORDER BY highrisk DESC, total DESC LIMIT 50", params)
+        acols = [d.name for d in cur.description]
+        assets = [dict(zip(acols, r)) for r in cur.fetchall()]
+        cur.execute(f"SELECT {_FIELDS} FROM current_findings{where} "
+                    f"ORDER BY {rank}, detected_at DESC LIMIT 1000", params)
+        fcols = [d.name for d in cur.description]
+        rows = [dict(zip(fcols, r)) for r in cur.fetchall()]
+    _audit(ctx["user"]["name"], ctx["role"].value, "generate_report", request,
+           detail=f"zone={zone or 'all'}; {len(rows)} findings")
+    return templates.TemplateResponse("report.html", {
+        "request": request, "by_sev": by_sev, "by_cat": by_cat, "assets": assets,
+        "rows": rows, "scope": zone or "All zones", "severities": _SEVERITIES,
+        "generated": dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d %H:%M UTC"), **ctx},
+    )
+
+
 @app.get("/findings/{finding_id}", response_class=HTMLResponse)
 async def finding_detail(request: Request, finding_id: int):
     ctx = _ctx(request)
@@ -333,8 +378,9 @@ async def finding_detail(request: Request, finding_id: int):
 
     _audit(ctx["user"]["name"], ctx["role"].value, "view_finding", request,
            object_type="finding", object_id=str(finding_id))
+    pb = playbook_for(record.get("category"), record.get("service_name"), record.get("cve"))
     return templates.TemplateResponse(
-        "finding_detail.html", {"request": request, "f": record, **ctx},
+        "finding_detail.html", {"request": request, "f": record, "pb": pb, **ctx},
     )
 
 

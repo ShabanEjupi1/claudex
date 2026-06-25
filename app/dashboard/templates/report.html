@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block title %}Posture report{% endblock %}
+{% block content %}
+<div class="report">
+  <div class="report-actions no-print">
+    <button onclick="window.print()">Print / Save as PDF</button>
+    <span class="muted">Scope:</span>
+    <a href="/report">All zones</a>
+  </div>
+
+  <h1>Network Security Posture Report</h1>
+  <p class="muted">Scope: <strong>{{ scope }}</strong> &middot; Generated {{ generated }}
+     &middot; by {{ user.name }}</p>
+
+  <h2>Summary by severity</h2>
+  <table class="compact">
+    <thead><tr>{% for s in severities %}<th class="sev-{{ s }}">{{ s }}</th>{% endfor %}<th>total</th></tr></thead>
+    <tbody><tr>
+      {% set ns = namespace(total=0) %}
+      {% for s in severities %}{% set ns.total = ns.total + by_sev.get(s, 0) %}<td>{{ by_sev.get(s, 0) }}</td>{% endfor %}
+      <td><strong>{{ ns.total }}</strong></td>
+    </tr></tbody>
+  </table>
+
+  <h2>By category</h2>
+  <table class="compact">
+    <thead><tr><th>Category</th><th>Count</th></tr></thead>
+    <tbody>
+    {% for cat, n in by_cat %}<tr><td>{{ cat }}</td><td>{{ n }}</td></tr>{% endfor %}
+    {% if not by_cat %}<tr><td colspan="2" class="muted">No open findings.</td></tr>{% endif %}
+    </tbody>
+  </table>
+
+  <h2>Top at-risk assets</h2>
+  <table class="compact">
+    <thead><tr><th>Asset</th><th>IP</th><th>Zone</th><th>Critical+High</th><th>Total</th></tr></thead>
+    <tbody>
+    {% for a in assets %}
+      <tr><td>{{ a.hostname or a.ip }}</td><td>{{ a.ip }}</td><td>{{ a.zone }}</td>
+          <td>{{ a.highrisk }}</td><td>{{ a.total }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+
+  <h2>Findings <span class="muted">({{ rows|length }}{% if rows|length == 1000 %}, capped at 1000{% endif %})</span></h2>
+  <table class="compact">
+    <thead><tr><th>Sev</th><th>Category</th><th>Asset</th><th>Zone</th><th>Service</th><th>CVE</th><th>Evidence</th></tr></thead>
+    <tbody>
+    {% for r in rows %}
+      <tr>
+        <td class="sev-{{ r.severity }}">{{ r.severity }}</td>
+        <td>{{ r.category }}</td>
+        <td>{{ r.asset_hostname or r.asset_ip }}</td>
+        <td>{{ r.asset_zone }}</td>
+        <td>{% if r.service_name %}{{ r.service_name }}/{{ r.service_port }}{% endif %}</td>
+        <td>{% if r.cve %}{{ r.cve|join(', ') }}{% endif %}</td>
+        <td class="evidence-cell">{{ r.evidence }}</td>
+      </tr>
+    {% endfor %}
+    {% if not rows %}<tr><td colspan="7" class="muted">No findings in scope.</td></tr>{% endif %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

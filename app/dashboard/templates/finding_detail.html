@@ -16,5 +16,23 @@
   {# Evidence is untrusted scanner text. Jinja2 autoescaping renders it inert. #}
   <dt>Evidence</dt><dd class="evidence">{{ f.evidence }}</dd>
 </dl>
+
+{% if pb %}
+<section class="playbook">
+  <h2>Remediation — {{ pb.title }}</h2>
+  <p>{{ pb.summary }}</p>
+  <ol>
+    {% for step in pb.steps %}<li>{{ step }}</li>{% endfor %}
+  </ol>
+  {% if pb.references %}
+  <p class="muted">References:
+    {% for label, url in pb.references %}
+      <a href="{{ url }}" rel="noopener noreferrer" target="_blank">{{ label }}</a>{% if not loop.last %} &middot; {% endif %}
+    {% endfor %}
+  </p>
+  {% endif %}
+</section>
+{% endif %}
+
 <p><a href="/findings">&larr; Back to findings</a></p>
 {% endblock %}
