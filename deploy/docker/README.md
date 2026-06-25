@@ -110,6 +110,19 @@ findings just appear on the dashboard. Uses host networking + `NET_RAW` so `-sS`
 works against the LAN. Stop it with `docker compose --profile scanner down` (or
 just `docker compose stop scanner`).
 
+**Risk classification & real CVEs.** Findings are scored by service (telnet/SMB/
+RDP/exposed-DB/SNMP/SSHv1… get real severities and a "why it's unsafe" rationale),
+and the converter reads nmap NSE script output for actual CVEs/CVSS. To get that
+vulnerability evidence, add scripts to `NMAP_ARGS`:
+```
+# version -> known CVEs (needs internet from the scanner; sends versions to vulners.com):
+NMAP_ARGS=-sV --script vulners -T4 --top-ports 1000 -Pn
+# active vuln checks (slower, more intrusive — e.g. smb-vuln-ms17-010):
+NMAP_ARGS=-sS -sV --script "default,vuln" -T4 --top-ports 1000 -Pn
+```
+Without scripts you still get service-based risk scoring; with them you also get
+CVEs and CVSS-derived severity.
+
 ## Operations
 
 ```bash

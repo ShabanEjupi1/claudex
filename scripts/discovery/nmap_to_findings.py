@@ -1,23 +1,19 @@
 #!/usr/bin/env python3
-"""Convert nmap XML output into audit findings and push them to the ingest API.
+"""Convert nmap XML into risk-classified audit findings and push them to ingest.
 
-Standard library only — runs on any host with python3 that can reach the ingest
-API. Each open port becomes one finding; cleartext/legacy management services are
-flagged at higher severity, everything else is recorded as an informational
-open-port (so the dashboard reflects real attack surface).
+Standard library only. Each open port becomes a finding with a real-world risk
+rationale (why it's unsafe), severity derived from the service AND any CVSS the
+scan turned up, and CVEs extracted from nmap NSE scripts.
 
-Usage:
-    # 1. scan (SYN+UDP needs root; -sT works unprivileged)
-    sudo nmap -sS -sV -O -Pn -oX scan.xml 10.10.173.0/24
+To get real vulnerability evidence (not just open ports), scan with version +
+vuln scripts, e.g.:
+    sudo nmap -sS -sV --script "default,vuln" -T4 --top-ports 1000 -Pn -oX scan.xml 10.10.173.0/24
+    # or, version->CVE lookup (needs internet from the scanner; sends versions to vulners.com):
+    sudo nmap -sV --script vulners -T4 --top-ports 1000 -Pn -oX scan.xml 10.10.173.0/24
 
-    # 2. convert + push
-    export INGEST_URL=http://127.0.0.1:8001/v1/findings
-    export INGEST_TOKEN=<the plaintext bearer token>
-    export INGEST_HMAC_KEY=<INGEST_HMAC_KEY from deploy/docker/.env>
-    ./nmap_to_findings.py scan.xml --zone core --collector kcus
-
-    # preview without sending
-    ./nmap_to_findings.py scan.xml --dry-run
+Then:
+    export INGEST_URL=http://127.0.0.1:8001/v1/findings INGEST_TOKEN=... INGEST_HMAC_KEY=...
+    ./nmap_to_findings.py scan.xml --zone core --collector "$(hostname)"
 """
 from __future__ import annotations
 
@@ -27,52 +23,108 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import sys
 import urllib.error
 import urllib.request
 import xml.etree.ElementTree as ET
 
-# service-name / (transport, port) -> (category, severity, note). Name match wins.
-_BY_NAME = {
-    "telnet": ("legacy-protocol", "high", "Telnet — cleartext remote management. Replace with SSHv2."),
-    "ftp": ("legacy-protocol", "medium", "FTP — cleartext credentials/data. Use SFTP/FTPS."),
-    "rlogin": ("legacy-protocol", "high", "rlogin — cleartext r-service. Disable."),
-    "rsh": ("legacy-protocol", "high", "rsh — cleartext r-service. Disable."),
-    "exec": ("legacy-protocol", "high", "rexec — cleartext r-service. Disable."),
-    "tftp": ("legacy-protocol", "medium", "TFTP — no auth, cleartext. Restrict/disable."),
-    "snmp": ("unencrypted-mgmt", "medium", "SNMP — likely v1/v2c cleartext community strings. Use SNMPv3."),
-    "http": ("unencrypted-mgmt", "low", "HTTP — unencrypted. If this is device management, move to HTTPS."),
-    "vnc": ("unencrypted-mgmt", "medium", "VNC — frequently unencrypted remote desktop."),
-    "ldap": ("unencrypted-mgmt", "low", "LDAP — cleartext directory access. Prefer LDAPS."),
-    "pop3": ("legacy-protocol", "low", "POP3 — cleartext mail retrieval."),
-    "imap": ("legacy-protocol", "low", "IMAP — cleartext mail retrieval."),
-    "smtp": ("legacy-protocol", "low", "SMTP — verify STARTTLS is enforced."),
-}
-_BY_PORT = {
-    ("tcp", 23): _BY_NAME["telnet"],
-    ("tcp", 21): _BY_NAME["ftp"],
-    ("tcp", 512): _BY_NAME["exec"],
-    ("tcp", 513): _BY_NAME["rlogin"],
-    ("tcp", 514): _BY_NAME["rsh"],
-    ("udp", 69): _BY_NAME["tftp"],
-    ("udp", 161): _BY_NAME["snmp"],
-    ("tcp", 80): _BY_NAME["http"],
-    ("tcp", 5900): _BY_NAME["vnc"],
-    ("tcp", 389): _BY_NAME["ldap"],
-}
+_SEV = ["info", "low", "medium", "high", "critical"]
 
 
-def _classify(name: str, transport: str, port: int):
-    if name and name.lower() in _BY_NAME:
-        return _BY_NAME[name.lower()]
-    if (transport, port) in _BY_PORT:
-        return _BY_PORT[(transport, port)]
-    return ("open-port", "info", "Open port observed; review whether it should be exposed.")
+def _max_sev(a: str, b: str) -> str:
+    return a if _SEV.index(a) >= _SEV.index(b) else b
+
+
+def _cvss_to_sev(score: float) -> str:
+    if score >= 9.0:
+        return "critical"
+    if score >= 7.0:
+        return "high"
+    if score >= 4.0:
+        return "medium"
+    if score > 0:
+        return "low"
+    return "info"
+
+
+# service-name -> (category, base severity, why-it's-unsafe rationale)
+_RISK = {
+    "telnet": ("legacy-protocol", "high", "Cleartext remote management — credentials and sessions are sniffable on the wire. Replace with SSHv2."),
+    "ftp": ("legacy-protocol", "medium", "Cleartext credentials and data; check for anonymous login. Use SFTP/FTPS."),
+    "tftp": ("legacy-protocol", "medium", "No authentication, cleartext (UDP) — commonly abused to pull device configs."),
+    "rlogin": ("legacy-protocol", "high", "Cleartext r-service with trust-based auth. Disable."),
+    "rsh": ("legacy-protocol", "high", "Cleartext r-service. Disable."),
+    "exec": ("legacy-protocol", "high", "rexec cleartext remote execution. Disable."),
+    "snmp": ("unencrypted-mgmt", "medium", "SNMP v1/v2c uses cleartext community strings (often 'public'/'private') — device enumeration and config change. Move to SNMPv3."),
+    "microsoft-ds": ("vulnerability", "high", "SMB exposed — file-share and NTLM auth surface; historically EternalBlue (MS17-010), NTLM relay, null-session enumeration. Restrict to mgmt, patch, disable SMBv1."),
+    "netbios-ssn": ("legacy-protocol", "medium", "Legacy NetBIOS session service — share/name enumeration and NTLM relay. Disable NetBIOS over TCP/IP."),
+    "netbios-ns": ("legacy-protocol", "medium", "NetBIOS name service — NBT-NS/LLMNR poisoning captures credentials. Disable."),
+    "msrpc": ("open-port", "medium", "MS RPC endpoint mapper — exposes DCOM/admin services used for lateral movement. Restrict to mgmt subnets."),
+    "ms-wbt-server": ("unencrypted-mgmt", "high", "RDP exposed — brute-force and BlueKeep (CVE-2019-0708) target this. Require NLA, restrict to VPN/mgmt."),
+    "rdp": ("unencrypted-mgmt", "high", "RDP exposed — brute-force/BlueKeep. Require NLA, restrict to VPN/mgmt."),
+    "vnc": ("unencrypted-mgmt", "high", "VNC remote desktop — frequently unencrypted/weak auth. Tunnel over SSH/VPN only."),
+    "ldap": ("unencrypted-mgmt", "low", "Cleartext directory queries — credential and structure disclosure. Prefer LDAPS."),
+    "http": ("unencrypted-mgmt", "low", "Unencrypted web; if this is a device/admin UI, credentials are sniffable — move to HTTPS."),
+    "pop3": ("legacy-protocol", "low", "Cleartext mail retrieval. Enforce TLS."),
+    "imap": ("legacy-protocol", "low", "Cleartext mail retrieval. Enforce TLS."),
+    "smtp": ("legacy-protocol", "low", "Verify STARTTLS is enforced; cleartext auth / open relay are risks."),
+    "mysql": ("vulnerability", "high", "Database exposed to the network — should be bound to the app tier only. Brute-force and data-theft surface."),
+    "ms-sql-s": ("vulnerability", "high", "MSSQL exposed — brute-force, xp_cmdshell abuse. Restrict to the app tier."),
+    "postgresql": ("vulnerability", "high", "PostgreSQL exposed to the network. Restrict to the app tier."),
+    "mongodb": ("vulnerability", "high", "MongoDB exposed — historically unauthenticated by default; mass-data-theft target."),
+    "redis": ("vulnerability", "high", "Redis exposed — often unauthenticated; allows RCE via config/keys. Bind to localhost + auth."),
+    "elasticsearch": ("vulnerability", "high", "Elasticsearch exposed — unauthenticated data exposure. Restrict to the app tier."),
+}
+# port fallback when nmap didn't name the service
+_PORT_RISK = {
+    ("tcp", 23): "telnet", ("tcp", 21): "ftp", ("udp", 69): "tftp", ("tcp", 512): "exec",
+    ("tcp", 513): "rlogin", ("tcp", 514): "rsh", ("udp", 161): "snmp", ("tcp", 445): "microsoft-ds",
+    ("tcp", 139): "netbios-ssn", ("udp", 137): "netbios-ns", ("tcp", 135): "msrpc",
+    ("tcp", 3389): "ms-wbt-server", ("tcp", 5900): "vnc", ("tcp", 389): "ldap", ("tcp", 80): "http",
+    ("tcp", 110): "pop3", ("tcp", 143): "imap", ("tcp", 25): "smtp", ("tcp", 3306): "mysql",
+    ("tcp", 1433): "ms-sql-s", ("tcp", 5432): "postgresql", ("tcp", 27017): "mongodb",
+    ("tcp", 6379): "redis", ("tcp", 9200): "elasticsearch",
+}
+
+_CVE_RE = re.compile(r"CVE-\d{4}-\d{4,}")
+_CVE_CVSS_RE = re.compile(r"(CVE-\d{4}-\d{4,})\s+(\d{1,2}(?:\.\d)?)")
+
+
+def _classify(name: str, transport: str, port: int, version: str):
+    key = name.lower() if name and name.lower() in _RISK else _PORT_RISK.get((transport, port))
+    # SSH that still offers protocol v1 (e.g. "protocol 1.99") is a real weakness.
+    if (name or "").lower() == "ssh" and re.search(r"protocol 1\b|1\.99", version or ""):
+        return ("weak-crypto", "medium", "SSH offers legacy protocol v1 (insecure) — disable SSHv1, keep only v2.")
+    if key and key in _RISK:
+        return _RISK[key]
+    return ("open-port", "info", "Open port observed — review whether it should be reachable from this network.")
+
+
+def _parse_scripts(elem):
+    """Pull CVEs, max CVSS, a VULNERABLE flag and a short summary from <script>s."""
+    cves, max_cvss, vuln, lines = set(), 0.0, False, []
+    if elem is None:
+        return cves, max_cvss, vuln, ""
+    for s in elem.findall("script"):
+        out = s.get("output") or ""
+        sid = s.get("id") or ""
+        if not out:
+            continue
+        if "VULNERABLE" in out or sid.startswith("smb-vuln") or "exploit" in out.lower():
+            vuln = True
+        for m in _CVE_CVSS_RE.finditer(out):
+            try:
+                max_cvss = max(max_cvss, float(m.group(2)))
+            except ValueError:
+                pass
+        cves.update(_CVE_RE.findall(out))
+        head = out.strip().splitlines()[0][:200] if out.strip() else ""
+        lines.append(f"[{sid}] {head}")
+    return cves, max_cvss, vuln, " | ".join(lines)[:1500]
 
 
 def _load_root(path: str):
-    """Parse nmap XML, salvaging a truncated file (interrupted scan with no
-    closing </nmaprun>) by cutting to the last complete <host> element."""
     with open(path, "rb") as fh:
         data = fh.read()
     try:
@@ -85,11 +137,14 @@ def _load_root(path: str):
                 f"ERROR: {path} has no complete <host> elements — the scan didn't "
                 "finish (no closing </nmaprun>). Re-run nmap and let it complete."
             )
-        sys.stderr.write(
-            f"WARNING: {path} was truncated (interrupted scan); "
-            "salvaging up to the last complete host.\n"
-        )
+        sys.stderr.write(f"WARNING: {path} was truncated; salvaging up to the last complete host.\n")
         return ET.fromstring(text[: idx + len("</host>")] + "\n</nmaprun>\n")
+
+
+def _iso(epoch) -> str:
+    if epoch and str(epoch).isdigit():
+        return dt.datetime.fromtimestamp(int(epoch), dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _findings_from_xml(path: str, collector: str, zone: str | None):
@@ -100,13 +155,14 @@ def _findings_from_xml(path: str, collector: str, zone: str | None):
         status = host.find("status")
         if status is not None and status.get("state") != "up":
             continue
-        ipv4 = next((a.get("addr") for a in host.findall("address")
-                     if a.get("addrtype") == "ipv4"), None)
+        ipv4 = next((a.get("addr") for a in host.findall("address") if a.get("addrtype") == "ipv4"), None)
         if not ipv4:
-            continue  # schema requires an ipv4 asset.ip
+            continue
         hn = host.find("hostnames/hostname")
         hostname = hn.get("name") if hn is not None else None
         ts = _iso(host.get("starttime")) or default_ts
+        # host-level scripts (e.g. smb-vuln-*) apply to SMB/RPC findings on the host
+        h_cves, h_cvss, h_vuln, h_sum = _parse_scripts(host.find("hostscript"))
         for port in host.findall("ports/port"):
             state = port.find("state")
             if state is None or state.get("state") != "open":
@@ -115,17 +171,37 @@ def _findings_from_xml(path: str, collector: str, zone: str | None):
             portid = int(port.get("portid"))
             svc = port.find("service")
             name = svc.get("name") if svc is not None else None
-            product = " ".join(filter(None, [
+            version = " ".join(filter(None, [
                 svc.get("product") if svc is not None else None,
                 svc.get("version") if svc is not None else None,
+                svc.get("extrainfo") if svc is not None else None,
             ])).strip() if svc is not None else ""
-            category, severity, note = _classify(name or "", transport, portid)
+
+            category, severity, note = _classify(name or "", transport, portid, version)
+            p_cves, p_cvss, p_vuln, p_sum = _parse_scripts(port)
+            cves = sorted(p_cves | (h_cves if name and name.lower() in ("microsoft-ds", "netbios-ssn", "msrpc") else set()))
+            cvss = max(p_cvss, h_cvss if cves and h_cves else 0.0)
+            vuln = p_vuln or (h_vuln and bool(cves))
+
+            if cvss > 0:
+                severity = _max_sev(severity, _cvss_to_sev(cvss))
+            if vuln:
+                severity = _max_sev(severity, "high")
+            if cves or vuln:
+                category = "vulnerability"
+
             evidence = f"{transport.upper()}/{portid} open"
             if name:
                 evidence += f" ({name})"
-            if product:
-                evidence += f" — {product}"
+            if version:
+                evidence += f" — {version}"
             evidence += f". {note}"
+            if cvss > 0:
+                evidence += f" Highest CVSS {cvss}."
+            script_sum = p_sum or (h_sum if vuln or cves else "")
+            if script_sum:
+                evidence += f" Scan evidence: {script_sum}"
+
             finding = {
                 "schema_version": "1.0",
                 "source": {"collector": collector, "method": "nmap"},
@@ -141,17 +217,13 @@ def _findings_from_xml(path: str, collector: str, zone: str | None):
                 finding["asset"]["hostname"] = hostname[:253]
             if zone:
                 finding["asset"]["zone"] = zone[:64]
+            if cves:
+                finding["cve"] = cves[:50]
             out.append(finding)
     return out
 
 
-def _iso(epoch: str | None) -> str:
-    if epoch and epoch.isdigit():
-        return dt.datetime.fromtimestamp(int(epoch), dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    return dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
-def _push(url: str, token: str, hmac_key: str, finding: dict) -> tuple[int, str]:
+def _push(url: str, token: str, hmac_key: str, finding: dict):
     body = json.dumps(finding, separators=(",", ":")).encode("utf-8")
     sig = hmac.new(hmac_key.encode("utf-8"), body, hashlib.sha256).hexdigest()
     req = urllib.request.Request(url, data=body, method="POST", headers={
@@ -169,7 +241,7 @@ def _push(url: str, token: str, hmac_key: str, finding: dict) -> tuple[int, str]
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Push nmap XML findings to the ingest API.")
+    ap = argparse.ArgumentParser(description="Push risk-classified nmap findings to the ingest API.")
     ap.add_argument("xml", help="nmap -oX output file")
     ap.add_argument("--collector", default=os.uname().nodename, help="source.collector name")
     ap.add_argument("--zone", default=None, help="tag all findings with this asset zone")
@@ -177,7 +249,11 @@ def main() -> int:
     args = ap.parse_args()
 
     findings = _findings_from_xml(args.xml, args.collector, args.zone)
-    print(f"parsed {len(findings)} open-port finding(s) from {args.xml}", file=sys.stderr)
+    by_sev = {}
+    for f in findings:
+        by_sev[f["severity"]] = by_sev.get(f["severity"], 0) + 1
+    print(f"parsed {len(findings)} finding(s) from {args.xml}: "
+          + ", ".join(f"{k}={by_sev[k]}" for k in _SEV if k in by_sev), file=sys.stderr)
     if args.dry_run:
         json.dump(findings, sys.stdout, indent=2)
         print()
@@ -196,8 +272,7 @@ def main() -> int:
         if code == 201:
             ok += 1
         else:
-            print(f"  push failed [{code}] {f['asset']['ip']}:{f['service']['port']} -> {msg[:160]}",
-                  file=sys.stderr)
+            print(f"  push failed [{code}] {f['asset']['ip']}:{f['service']['port']} -> {msg[:160]}", file=sys.stderr)
     print(f"pushed {ok}/{len(findings)} findings to {url}", file=sys.stderr)
     return 0 if ok == len(findings) else 1
 
