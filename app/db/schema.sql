@@ -31,11 +31,15 @@ CREATE TABLE IF NOT EXISTS findings (
     evidence          TEXT,
     detected_at       TIMESTAMPTZ NOT NULL,
     remediated_at     TIMESTAMPTZ,
+    -- Stable identity for de-duplication across repeated scans. Collectors set it
+    -- (e.g. ip|method|transport|port, or ip|suricata|sid). NULL = always insert.
+    fingerprint       TEXT,
     created_at        TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_findings_zone   ON findings (asset_zone);
 CREATE INDEX IF NOT EXISTS idx_findings_sev    ON findings (severity);
 CREATE INDEX IF NOT EXISTS idx_findings_status ON findings (status);
+CREATE INDEX IF NOT EXISTS idx_findings_fp ON findings (fingerprint);
 
 CREATE TABLE IF NOT EXISTS audit_log (
     id          BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -65,12 +69,26 @@ BEGIN
     END IF;
 END$$;
 
--- WRITE-ONLY ingest: INSERT findings, nothing else. No SELECT, no UPDATE/DELETE.
+-- WRITE-ONLY ingest: INSERT findings, nothing else. No SELECT/UPDATE/DELETE — so
+-- a compromised collector can neither read nor alter existing findings. De-dup of
+-- repeated detections is done with INSERT ... ON CONFLICT (fingerprint) DO NOTHING,
+-- which needs only INSERT (no read), preserving the write-only property.
 GRANT INSERT ON findings TO app_ingest;
 
--- Dashboard: read findings; append + read its own audit trail.
-GRANT SELECT          ON findings  TO app_dashboard;
-GRANT SELECT, INSERT  ON audit_log TO app_dashboard;
+-- De-duplicated read view: the latest row per fingerprint (NULL fingerprints are
+-- kept individually). The write tier stays INSERT-only/append-only and keeps full
+-- history; de-dup happens here at read time, so the dashboard counts stay honest
+-- across repeated scans without the ingest role ever needing read/update.
+CREATE OR REPLACE VIEW current_findings AS
+SELECT DISTINCT ON (coalesce(fingerprint, 'id:' || id))
+    *
+FROM findings
+ORDER BY coalesce(fingerprint, 'id:' || id), detected_at DESC, id DESC;
+
+-- Dashboard: read findings (raw + de-duped view); append + read its own audit trail.
+GRANT SELECT          ON findings         TO app_dashboard;
+GRANT SELECT          ON current_findings TO app_dashboard;
+GRANT SELECT, INSERT  ON audit_log        TO app_dashboard;
 
 -- Optional defence in depth: enforce zone need-to-know inside the DB with RLS.
 -- ALTER TABLE findings ENABLE ROW LEVEL SECURITY;

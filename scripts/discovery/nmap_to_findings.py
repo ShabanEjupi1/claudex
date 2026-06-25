@@ -212,6 +212,10 @@ def _findings_from_xml(path: str, collector: str, zone: str | None):
                 "status": "open",
                 "evidence": evidence[:4096],
                 "detected_at": ts,
+                # stable identity so re-scans dedup; category included so a genuine
+                # re-classification (e.g. open-port -> vulnerability) still records.
+                "fingerprint": hashlib.sha1(
+                    f"{ipv4}|nmap|{transport}|{portid}|{category}".encode()).hexdigest(),
             }
             if hostname:
                 finding["asset"]["hostname"] = hostname[:253]

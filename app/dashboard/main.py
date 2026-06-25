@@ -142,13 +142,20 @@ def _finding_where(request: Request, zones: list[str] | None):
     """Build a parameterized WHERE from the query filters + zone limit."""
     conds, params = _zone_conds(zones)
     active: dict[str, str] = {}
-    for key, col in (("severity", "severity"), ("status", "status"),
-                     ("category", "category"), ("zone", "asset_zone")):
+    for key, col in (("severity", "severity"), ("status", "status"), ("category", "category")):
         val = request.query_params.get(key)
         if val:
             conds.append(f"{col} = %s")
             params.append(val)
             active[key] = val
+    zone = request.query_params.get("zone")
+    if zone == "(unzoned)":          # the Zones page label for NULL asset_zone
+        conds.append("asset_zone IS NULL")
+        active["zone"] = zone
+    elif zone:
+        conds.append("asset_zone = %s")
+        params.append(zone)
+        active["zone"] = zone
     q = (request.query_params.get("q") or "").strip()
     if q:
         like = f"%{q}%"
@@ -200,9 +207,9 @@ async def summary(request: Request):
         return RedirectResponse("/login", status_code=302)
     open_f = "status NOT IN ('remediated','false-positive')"
     with pool.connection() as conn, conn.cursor() as cur:
-        cur.execute(f"SELECT severity, count(*) FROM findings WHERE {open_f} GROUP BY severity")
+        cur.execute(f"SELECT severity, count(*) FROM current_findings WHERE {open_f} GROUP BY severity")
         by_sev = {row[0]: row[1] for row in cur.fetchall()}
-        cur.execute(f"SELECT category, count(*) FROM findings WHERE {open_f} "
+        cur.execute(f"SELECT category, count(*) FROM current_findings WHERE {open_f} "
                     "GROUP BY category ORDER BY 2 DESC")
         by_cat = cur.fetchall()
         top_assets = []
@@ -210,7 +217,7 @@ async def summary(request: Request):
             cur.execute(
                 "SELECT host(asset_ip) AS ip, max(asset_hostname) AS hostname, "
                 "count(*) FILTER (WHERE severity IN ('critical','high')) AS highrisk, "
-                f"count(*) AS total FROM findings WHERE {open_f} "
+                f"count(*) AS total FROM current_findings WHERE {open_f} "
                 "GROUP BY asset_ip ORDER BY highrisk DESC, total DESC LIMIT 5")
             top_assets = [dict(zip(["ip", "hostname", "highrisk", "total"], r))
                           for r in cur.fetchall()]
@@ -235,13 +242,13 @@ async def list_findings(request: Request):
     zones = zone_filter(ctx["role"], ctx["zones"])
     where, params, active = _finding_where(request, zones)
     with pool.connection() as conn, conn.cursor() as cur:
-        cur.execute(f"SELECT {_FIELDS} FROM findings{where} "
+        cur.execute(f"SELECT {_FIELDS} FROM current_findings{where} "
                     "ORDER BY detected_at DESC LIMIT 500", params)
         cols = [d.name for d in cur.description]
         rows = [dict(zip(cols, r)) for r in cur.fetchall()]
-        cur.execute("SELECT DISTINCT category FROM findings ORDER BY 1")
+        cur.execute("SELECT DISTINCT category FROM current_findings ORDER BY 1")
         categories = [r[0] for r in cur.fetchall()]
-        cur.execute("SELECT DISTINCT asset_zone FROM findings "
+        cur.execute("SELECT DISTINCT asset_zone FROM current_findings "
                     "WHERE asset_zone IS NOT NULL ORDER BY 1")
         zone_opts = [r[0] for r in cur.fetchall()]
 
@@ -272,7 +279,7 @@ async def assets_view(request: Request):
             "count(*) FILTER (WHERE severity='critical') AS crit, "
             "count(*) FILTER (WHERE severity='high') AS high, "
             "count(*) FILTER (WHERE severity='medium') AS med "
-            f"FROM findings{where} GROUP BY asset_ip "
+            f"FROM current_findings{where} GROUP BY asset_ip "
             "ORDER BY crit DESC, high DESC, med DESC, total DESC LIMIT 500", params)
         cols = [d.name for d in cur.description]
         rows = [dict(zip(cols, r)) for r in cur.fetchall()]
@@ -295,7 +302,7 @@ async def zones_view(request: Request):
             "SELECT coalesce(asset_zone,'(unzoned)') AS zone, "
             "count(DISTINCT asset_ip) AS assets, count(*) AS total, "
             "count(*) FILTER (WHERE severity IN ('critical','high')) AS highrisk "
-            f"FROM findings{where} GROUP BY asset_zone "
+            f"FROM current_findings{where} GROUP BY asset_zone "
             "ORDER BY highrisk DESC, total DESC", params)
         cols = [d.name for d in cur.description]
         rows = [dict(zip(cols, r)) for r in cur.fetchall()]
@@ -340,7 +347,7 @@ async def export_csv(request: Request):
         raise HTTPException(status_code=403, detail="export requires auditor/admin")
 
     with pool.connection() as conn, conn.cursor() as cur:
-        cur.execute(f"SELECT {_FIELDS} FROM findings ORDER BY detected_at DESC")
+        cur.execute(f"SELECT {_FIELDS} FROM current_findings ORDER BY detected_at DESC")
         cols = [d.name for d in cur.description]
         rows = cur.fetchall()
 

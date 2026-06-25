@@ -72,6 +72,9 @@ def _finding(ev: dict, collector: str, zone: str | None) -> dict | None:
                      f"{src}:{ev.get('src_port', '')} -> {dst}:{ev.get('dest_port', '')} "
                      f"[sid {a.get('signature_id', '')}]")[:4096],
         "detected_at": _norm_ts(ev.get("timestamp")),
+        # one finding per (asset, signature) — repeats upsert instead of duplicating
+        "fingerprint": hashlib.sha1(
+            f"{asset}|suricata|{a.get('signature_id', '')}".encode()).hexdigest(),
     }
     port = ev.get("dest_port")
     if isinstance(port, int) and proto in ("tcp", "udp"):

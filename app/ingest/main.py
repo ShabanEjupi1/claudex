@@ -31,13 +31,13 @@ INSERT INTO findings (
     asset_hostname, asset_ip, asset_role, asset_zone,
     category, service_name, service_port, service_transport,
     cis_reference, cve, severity, status, evidence,
-    detected_at, remediated_at
+    detected_at, remediated_at, fingerprint
 ) VALUES (
     %(schema_version)s, %(source_collector)s, %(source_method)s,
     %(asset_hostname)s, %(asset_ip)s::inet, %(asset_role)s, %(asset_zone)s,
     %(category)s, %(service_name)s, %(service_port)s, %(service_transport)s,
     %(cis_reference)s, %(cve)s, %(severity)s, %(status)s, %(evidence)s,
-    %(detected_at)s::timestamptz, %(remediated_at)s::timestamptz
+    %(detected_at)s::timestamptz, %(remediated_at)s::timestamptz, %(fingerprint)s
 );
 """
 
@@ -84,6 +84,7 @@ def _flatten(payload: dict) -> dict:
         "evidence": payload.get("evidence"),
         "detected_at": payload["detected_at"],
         "remediated_at": payload.get("remediated_at"),
+        "fingerprint": payload.get("fingerprint"),
     }
 
 

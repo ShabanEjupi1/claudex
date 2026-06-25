@@ -54,6 +54,7 @@
       "description": "Free text from scanners. UNTRUSTED — the dashboard MUST output-encode this (stored-XSS risk)."
     },
     "detected_at": { "type": "string", "format": "date-time" },
-    "remediated_at": { "type": ["string", "null"], "format": "date-time" }
+    "remediated_at": { "type": ["string", "null"], "format": "date-time" },
+    "fingerprint": { "type": "string", "maxLength": 128, "description": "Stable identity for de-duplication across repeated scans (collector-supplied)." }
   }
 }
