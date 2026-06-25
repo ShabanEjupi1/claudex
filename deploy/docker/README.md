@@ -123,6 +123,36 @@ NMAP_ARGS=-sS -sV --script "default,vuln" -T4 --top-ports 1000 -Pn
 Without scripts you still get service-based risk scoring; with them you also get
 CVEs and CVSS-derived severity.
 
+## Intrusion detection (Suricata IDS)
+
+Adds **real-time threat detection** — exploits, malware/C2, port-scans, IPS
+signatures — feeding the dashboard as `intrusion` findings. It's **passive**
+(it watches a copy of traffic; it does not block), so there's no outage risk.
+Actual blocking belongs at the network edge under change control — not here.
+
+In `.env`:
+```
+IDS_INTERFACE=eno1        # the host NIC on your LAN
+INGEST_TOKEN=<token>      # same one the scanner/ingest use
+```
+Start it:
+```bash
+docker compose --profile ids up -d --build
+docker compose logs -f suricata        # rule load + alerts
+docker compose logs -f ids-shipper     # findings pushed
+```
+
+- **`suricata`** sniffs `IDS_INTERFACE` (host networking + `NET_RAW`), loads ET
+  Open rules, and writes alerts to `eve.json`.
+- **`ids-shipper`** tails `eve.json`, maps alerts to findings (severity from the
+  signature: Trojan/exploit/C2 → critical/high), extracts CVEs, and **de-dups**
+  repeats within `IDS_DEDUP_WINDOW` so noisy rules don't flood the dashboard.
+
+To see anything, Suricata must observe real traffic on `IDS_INTERFACE`. On a
+switched LAN a host only sees its own traffic — for network-wide visibility,
+feed it a **SPAN/mirror port** (ask your network team) or run it on a gateway.
+Findings appear under category `intrusion`. Stop with `docker compose --profile ids down`.
+
 ## Operations
 
 ```bash

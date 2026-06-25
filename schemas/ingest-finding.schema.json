@@ -14,7 +14,7 @@
       "required": ["collector", "method"],
       "properties": {
         "collector": { "type": "string", "maxLength": 128 },
-        "method": { "type": "string", "enum": ["nmap", "nessus", "openvas", "cis-cat", "ansible", "nipper", "manual"] }
+        "method": { "type": "string", "enum": ["nmap", "nessus", "openvas", "cis-cat", "ansible", "nipper", "suricata", "manual"] }
       }
     },
     "asset": {
@@ -30,7 +30,7 @@
     },
     "category": {
       "type": "string",
-      "enum": ["legacy-protocol", "open-port", "unencrypted-mgmt", "weak-crypto", "default-credential", "vulnerability", "config-drift"]
+      "enum": ["legacy-protocol", "open-port", "unencrypted-mgmt", "weak-crypto", "default-credential", "vulnerability", "config-drift", "intrusion"]
     },
     "service": {
       "type": "object",

@@ -106,8 +106,40 @@ services:
       INGEST_HMAC_KEY: ${INGEST_HMAC_KEY:?set in .env}
     restart: unless-stopped
 
+  # Suricata IDS — passive intrusion/malware/exploit detection. Opt-in:
+  # `docker compose --profile ids up -d`. Sniffs IDS_INTERFACE on the host.
+  suricata:
+    image: jasonish/suricata:7.0
+    profiles: ["ids"]
+    network_mode: host
+    cap_add: [NET_ADMIN, NET_RAW, SYS_NICE]
+    command: ["-i", "${IDS_INTERFACE:-eno1}"]
+    volumes:
+      - suricata-logs:/var/log/suricata
+    restart: unless-stopped
+
+  # Ships Suricata alerts (eve.json) into the dashboard as findings.
+  ids-shipper:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/ids/Dockerfile
+    profiles: ["ids"]
+    network_mode: host          # reach ingest on 127.0.0.1:8001
+    depends_on: [suricata]
+    command: ["--follow", "/var/log/suricata/eve.json"]
+    environment:
+      INGEST_URL: http://127.0.0.1:8001/v1/findings
+      INGEST_TOKEN: ${INGEST_TOKEN:?set in .env}
+      INGEST_HMAC_KEY: ${INGEST_HMAC_KEY:?set in .env}
+      IDS_ZONE: ${IDS_ZONE:-}
+      IDS_DEDUP_WINDOW: ${IDS_DEDUP_WINDOW:-3600}
+    volumes:
+      - suricata-logs:/var/log/suricata:ro
+    restart: unless-stopped
+
 volumes:
   pgdata:
+  suricata-logs:
 
 networks:
   audit:
